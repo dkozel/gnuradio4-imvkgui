@@ -1,0 +1,133 @@
+From 69598d796b417c61f50280868b09f5fb30c364ca Mon Sep 17 00:00:00 2001
+From: Derek Kozel <dkozel@deepsig.ai>
+Date: Sun, 16 Aug 2026 12:42:51 +0100
+Subject: [PATCH] AcceleratorBuffer: work around NVIDIA Xid 32 on transfer
+ event signalling
+
+On NVIDIA driver 580.173.02 (reproduced on an RTX 5060 Ti), vkCmdSetEvent with
+a TRANSFER source stage mask, recorded into a command buffer allocated from an
+async-compute queue family, faults the GPU. The kernel logs
+
+    NVRM: Xid (PCI:0000:01:00): 32   (corrupted push buffer)
+
+and the submission fails with VK_ERROR_DEVICE_LOST.
+
+Three conditions must hold together:
+
+  1. the logical device creates queues in both the graphics family and the
+     async-compute family;
+  2. the command buffer comes from the async-compute family;
+  3. the vkCmdSetEvent source stage mask is TRANSFER.
+
+AcceleratorBuffer meets all three on every GPU transfer: VulkanInit creates
+queues in every family, QueueManager sorts by fewest capability flags so the
+transfer and compute handles both land on async-compute, and all four copy
+paths signalled their completion event with a TRANSFER stage mask. The result
+is that every buffer upload or download kills the device, which makes scopehal
+unusable on affected hardware. tests/Acceleration (Buffers_CpuGpu/MirrorCopy)
+fails for the same reason.
+
+Vulkan validation, including synchronization validation, reports nothing: the
+usage is spec-legal. A ~150 line reproduction with no shader, no buffers, no
+memory and no barriers is available on request; the command buffer contains
+only the vkCmdSetEvent call.
+
+Route the stage mask through a single accessor and use eAllCommands. That is
+strictly more conservative than eTransfer - the event signals later, never
+earlier - so correctness is preserved, and the cost is negligible because
+these command buffers contain only the copy itself.
+
+vkCmdSetEvent2 from VK_KHR_synchronization2 also avoids the fault and would be
+the better long-term fix, but it requires enabling that extension at device
+creation (scopehal currently requests Vulkan 1.2), so it is left for a separate
+change.
+---
+ scopehal/AcceleratorBuffer.h | 44 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 40 insertions(+), 4 deletions(-)
+
+diff --git a/scopehal/AcceleratorBuffer.h b/scopehal/AcceleratorBuffer.h
+index 3789dfd4..37b79977 100644
+--- a/scopehal/AcceleratorBuffer.h
++++ b/scopehal/AcceleratorBuffer.h
+@@ -1455,7 +1455,8 @@ protected:
+ 
+ 		//TODO: timeline semaphores if available
+ 		//for now use events
+-		g_vkTransferCommandBuffer->setEvent(**m_deviceHostTransferEvent, vk::PipelineStageFlagBits::eTransfer);
++		//WORKAROUND eTransfer here faults NVIDIA GPUs, see SetEventStage() below
++		g_vkTransferCommandBuffer->setEvent(**m_deviceHostTransferEvent, SetEventStage());
+ 
+ 		g_vkTransferCommandBuffer->end();
+ 
+@@ -1533,7 +1534,7 @@ protected:
+ 
+ 		//TODO: timeline semaphores if available
+ 		//for now use events
+-		cmdBuf.setEvent(**m_deviceHostTransferEvent, vk::PipelineStageFlagBits::eTransfer);
++		cmdBuf.setEvent(**m_deviceHostTransferEvent, SetEventStage());
+ 
+ 		m_cpuPhysMemIsStale = false;
+ 	}
+@@ -1556,7 +1557,7 @@ protected:
+ 
+ 		//TODO: timeline semaphores if available
+ 		//for now use events
+-		g_vkTransferCommandBuffer->setEvent(**m_hostDeviceTransferEvent, vk::PipelineStageFlagBits::eTransfer);
++		g_vkTransferCommandBuffer->setEvent(**m_hostDeviceTransferEvent, SetEventStage());
+ 
+ 		g_vkTransferCommandBuffer->end();
+ 
+@@ -1584,7 +1585,7 @@ protected:
+ 
+ 		//TODO: timeline semaphores if available
+ 		//for now use events
+-		cmdBuf.setEvent(**m_hostDeviceTransferEvent, vk::PipelineStageFlagBits::eTransfer);
++		cmdBuf.setEvent(**m_hostDeviceTransferEvent, SetEventStage());
+ 
+ 		//Add the barrier
+ 		cmdBuf.pipelineBarrier(
+@@ -1600,6 +1601,41 @@ protected:
+ 		m_gpuPhysMemIsStale = false;
+ 	}
+ public:
++	/**
++		@brief Source stage mask used when signalling the host/device transfer events
++
++		This should be vk::PipelineStageFlagBits::eTransfer, which is the tightest correct
++		mask: the events are signalled immediately after a vkCmdCopyBuffer and nothing else
++		in these command buffers needs to complete first.
++
++		It is eAllCommands instead because of an NVIDIA driver defect. On driver 580.173.02
++		(and an RTX 5060 Ti), vkCmdSetEvent with a TRANSFER source stage, recorded into a
++		command buffer from an async-compute queue family, faults the GPU with
++		"NVRM: Xid 32" (corrupted push buffer) and VK_ERROR_DEVICE_LOST. Three conditions
++		must hold together:
++
++			1. the logical device creates queues in both the graphics family and the
++			   async-compute family (VulkanInit.cpp creates queues in every family);
++			2. the command buffer comes from the async-compute family (QueueManager sorts
++			   by fewest capability flags, so transfers land there);
++			3. the source stage mask is TRANSFER.
++
++		Every AcceleratorBuffer GPU transfer meets all three, so every transfer kills the
++		device. Vulkan validation reports nothing: the usage is spec-legal. A 150-line
++		reproduction with no shader, no buffers and no barriers is available.
++
++		Any other stage mask avoids it, as does vkCmdSetEvent2 from VK_KHR_synchronization2.
++		eAllCommands is strictly more conservative than eTransfer - it signals later, never
++		earlier - so correctness is preserved. The cost is negligible here because these
++		command buffers contain only the copy itself.
++
++		vkCmdSetEvent2 would be the better long-term fix, but it needs VK_KHR_synchronization2
++		enabled at device creation (scopehal currently requests Vulkan 1.2) and is therefore
++		a larger change than this workaround warrants.
++	 */
++	static vk::PipelineStageFlagBits SetEventStage()
++	{ return vk::PipelineStageFlagBits::eAllCommands; }
++
+ 	/**
+ 		@brief Adds a memory barrier for transferring data from host to device
+ 	 */
+-- 
+2.43.0
+

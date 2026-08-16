@@ -1,0 +1,388 @@
+/***********************************************************************************************************************
+*                                                                                                                      *
+* imcufosphor                                                                                                          *
+*                                                                                                                      *
+***********************************************************************************************************************/
+
+/**
+	@file
+	@brief Declaration of SigMFSource
+ */
+#ifndef SigMFSource_h
+#define SigMFSource_h
+
+#include "../../lib/scopehal/scopehal/scopehal.h"
+#include "../../lib/scopehal/scopehal/Oscilloscope.h"
+#include "../../lib/scopehal/scopehal/ComplexChannel.h"
+
+#include "sigmf_core_generated.h"
+#include "sigmf.h"
+#include "sigmf_helpers.h"
+
+#include <string>
+#include <vector>
+
+/**
+	@brief The SigMF record shape we support
+
+	Core namespace only. Adding a namespace here (e.g. sigmf::signal::DescrT for emitter
+	metadata) is a one-line change rather than a refactor, which is why this lives in one
+	place. See DESIGN.md section 7.1.
+
+	Note that libsigmf's own sigmf::metadata_file_to_json() cannot be used with this type:
+	it is not a template and hardcodes core+antenna+capture_details+signal. We parse into
+	our own type with nlohmann::json directly instead, which is three lines.
+ */
+typedef sigmf::SigMF<
+	sigmf::Global<sigmf::core::DescrT>,
+	sigmf::Capture<sigmf::core::DescrT>,
+	sigmf::Annotation<sigmf::core::DescrT> > SigMFRecord;
+
+/**
+	@brief Binary layout of one sample in a .sigmf-data file
+
+	SigMF datatype strings have the grammar (c|r)(f|i|u)(8|16|32|64)(_le|_be)?, e.g.
+	"cf32_le" or "ci16_le". Every recording in the demo dataset is ci16_le.
+ */
+class SigMFSampleFormat
+{
+public:
+	enum Kind
+	{
+		KIND_FLOAT,
+		KIND_SIGNED,
+		KIND_UNSIGNED
+	};
+
+	SigMFSampleFormat()
+	: m_complex(true)
+	, m_kind(KIND_FLOAT)
+	, m_bits(32)
+	, m_littleEndian(true)
+	{}
+
+	/**
+		@brief Parses a SigMF datatype string
+
+		@param str			The datatype string
+		@param errorOut		Set to a human readable reason on failure
+
+		@return True on success
+	 */
+	bool Parse(const std::string& str, std::string& errorOut);
+
+	///@brief Bytes occupied by one sample, counting both components if complex
+	size_t BytesPerSample() const
+	{ return (m_bits / 8) * (m_complex ? 2 : 1); }
+
+	///@brief True if the format carries I and Q
+	bool IsComplex() const
+	{ return m_complex; }
+
+	///@brief Human readable description, for error messages
+	std::string ToString() const;
+
+	bool m_complex;
+	Kind m_kind;
+	int m_bits;
+	bool m_littleEndian;
+};
+
+/**
+	@brief Plays back a SigMF recording as if it were a live SDR
+
+	An Oscilloscope subclass rather than an SCPISDR, because SCPISDR is bound to an
+	SCPITransport and there is no instrument here. MockOscilloscope is the precedent for an
+	instrument with no transport.
+
+	Exposes one ComplexChannel named "RX", which supplies I, Q and a center-frequency scalar
+	stream - the third of these is required by any downstream complex filter and is the
+	specific reason ComplexImportFilter is not usable. See DESIGN.md section 7.1.
+
+	AcquireData() reads a bounded block at the play cursor and converts it, so memory stays
+	flat regardless of file size. The demo dataset includes 2.9 GB recordings.
+ */
+class SigMFSource : public Oscilloscope
+{
+public:
+
+	/**
+		@brief Opens a SigMF recording
+
+		@param metaPath		Path to the .sigmf-meta file
+		@param dataPath		Path to the .sigmf-data file, or empty to derive it from metaPath
+
+		Check IsValid() afterwards; construction does not throw.
+	 */
+	SigMFSource(const std::string& metaPath, const std::string& dataPath = "");
+	virtual ~SigMFSource();
+
+	//not copyable or assignable
+	SigMFSource(const SigMFSource&) =delete;
+	SigMFSource& operator=(const SigMFSource&) =delete;
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Recording state
+
+	///@brief True if the recording opened successfully
+	bool IsValid() const
+	{ return m_valid; }
+
+	///@brief Human readable reason the recording could not be opened
+	const std::string& GetErrorMessage() const
+	{ return m_errorMessage; }
+
+	/**
+		@brief Center frequency at the play cursor, in Hz, at full precision
+
+		Use this rather than the ComplexChannel scalar stream for anything that needs
+		accuracy. That stream is a float, and a float cannot represent a GHz-scale carrier
+		to better than ~128-256 Hz - a quarter of an FFT bin on the narrower recordings in
+		the demo dataset. The scalar stream exists for downstream scopehal filters that
+		expect it; our own axis labelling should use this.
+	 */
+	double GetExactCenterFrequency() const;
+
+	///@brief Sample rate of the recording, Hz
+	double GetRecordingSampleRate() const
+	{ return m_sampleRate; }
+
+	///@brief Total number of complex samples in the data file
+	int64_t GetTotalSamples() const
+	{ return m_totalSamples; }
+
+	///@brief Parsed metadata, for annotation rendering later
+	const SigMFRecord& GetRecord() const
+	{ return m_record; }
+
+	///@brief Sample format of the data file
+	const SigMFSampleFormat& GetSampleFormat() const
+	{ return m_format; }
+
+	///@brief Path to the .sigmf-data file, which is not always the metadata basename
+	const std::string& GetDataPath() const
+	{ return m_dataPath; }
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Playback control
+
+	///@brief Index of the next sample to be read
+	int64_t GetPlayCursor() const
+	{ return m_playCursor; }
+
+	///@brief Moves the play cursor, clamped to the recording
+	void SeekToSample(int64_t sample);
+
+	///@brief True if playback restarts at the beginning on reaching the end
+	bool GetLooping() const
+	{ return m_looping; }
+
+	void SetLooping(bool loop)
+	{ m_looping = loop; }
+
+	///@brief True once the cursor has run off the end with looping disabled
+	bool AtEnd() const
+	{ return m_atEnd; }
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Ingest cost accounting
+	//
+	// Reading and converting samples is host work that competes with nothing else in the
+	// pipeline for the GPU, so it is invisible in any GPU-side measurement. At high sample
+	// rates it is a plausible bottleneck in its own right - a scalar int16 to float
+	// deinterleave at 245.76 MS/s writes about 2 GB/s - and the only way to know is to
+	// count it separately from everything else AcquireData() does.
+
+	///@brief Seconds spent in pread() since the last ResetIngestStats()
+	double GetReadSeconds() const
+	{ return m_tRead; }
+
+	///@brief Seconds spent in ConvertSamples() since the last ResetIngestStats()
+	double GetConvertSeconds() const
+	{ return m_tConvert; }
+
+	///@brief Complex samples delivered since the last ResetIngestStats()
+	int64_t GetSamplesDelivered() const
+	{ return m_samplesDelivered; }
+
+	void ResetIngestStats()
+	{
+		m_tRead = 0;
+		m_tConvert = 0;
+		m_samplesDelivered = 0;
+	}
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Oscilloscope implementation
+
+	virtual std::string IDPing() override
+	{ return ""; }
+
+	virtual std::string GetDriverName() const
+	{ return "sigmf"; }
+
+	//Instrument identity. These are pure virtual on Instrument rather than Oscilloscope,
+	//which is easy to miss: the full implementation surface is 42 pure virtuals, not the
+	//37 that Oscilloscope.h alone declares.
+
+	virtual std::string GetName() const override
+	{ return m_recordingName; }
+
+	virtual std::string GetVendor() const override
+	{ return "SigMF"; }
+
+	virtual std::string GetSerial() const override
+	{ return ""; }
+
+	virtual std::string GetTransportConnectionString() override
+	{ return m_dataPath; }
+
+	virtual std::string GetTransportName() override
+	{ return "file"; }
+
+	virtual unsigned int GetInstrumentTypes() const override;
+	virtual uint32_t GetInstrumentTypesForChannel(size_t i) const override;
+
+	virtual bool AcquireData() override;
+	virtual Oscilloscope::TriggerMode PollTrigger() override;
+	virtual void Start() override;
+	virtual void StartSingleTrigger() override;
+	virtual void Stop() override;
+	virtual void ForceTrigger() override;
+	virtual bool IsTriggerArmed() override;
+	virtual void PushTrigger() override;
+	virtual void PullTrigger() override;
+
+	virtual bool IsChannelEnabled(size_t i) override;
+	virtual void EnableChannel(size_t i) override;
+	virtual void DisableChannel(size_t i) override;
+	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i) override;
+	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type) override;
+	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i) override;
+	virtual double GetChannelAttenuation(size_t i) override;
+	virtual void SetChannelAttenuation(size_t i, double atten) override;
+	virtual unsigned int GetChannelBandwidthLimit(size_t i) override;
+	virtual void SetChannelBandwidthLimit(size_t i, unsigned int limit_mhz) override;
+	virtual float GetChannelVoltageRange(size_t i, size_t stream) override;
+	virtual void SetChannelVoltageRange(size_t i, size_t stream, float range) override;
+	virtual float GetChannelOffset(size_t i, size_t stream) override;
+	virtual void SetChannelOffset(size_t i, size_t stream, float offset) override;
+	virtual OscilloscopeChannel* GetExternalTrigger() override;
+
+	virtual std::vector<uint64_t> GetSampleRatesNonInterleaved() override;
+	virtual std::vector<uint64_t> GetSampleRatesInterleaved() override;
+	virtual uint64_t GetSampleRate() override;
+	virtual void SetSampleRate(uint64_t rate) override;
+	virtual std::vector<uint64_t> GetSampleDepthsNonInterleaved() override;
+	virtual std::vector<uint64_t> GetSampleDepthsInterleaved() override;
+	virtual uint64_t GetSampleDepth() override;
+	virtual void SetSampleDepth(uint64_t depth) override;
+	virtual bool IsInterleaving() override;
+	virtual bool SetInterleaving(bool combine) override;
+	virtual std::set<InterleaveConflict> GetInterleaveConflicts() override;
+	virtual void SetTriggerOffset(int64_t offset) override;
+	virtual int64_t GetTriggerOffset() override;
+
+	virtual bool HasFrequencyControls() override;
+	virtual bool HasTimebaseControls() override;
+
+protected:
+
+	///@brief Loads and validates the metadata. Sets m_valid and m_errorMessage.
+	void LoadMetadata(const std::string& metaPath, const std::string& dataPath);
+
+	/**
+		@brief Converts one block of raw file bytes into I and Q float samples
+
+		@param raw			Interleaved sample data as read from the file
+		@param nsamples		Number of complex samples in raw
+		@param idata		I output, already resized
+		@param qdata		Q output, already resized
+	 */
+	void ConvertSamples(
+		const uint8_t* raw,
+		size_t nsamples,
+		UniformAnalogWaveform* idata,
+		UniformAnalogWaveform* qdata);
+
+	///@brief Index of the capture segment containing the given sample, or 0 if none
+	size_t CaptureIndexForSample(int64_t sample) const;
+
+	///@brief True if the recording opened successfully
+	bool m_valid;
+
+	///@brief Why the recording could not be opened
+	std::string m_errorMessage;
+
+	///@brief Parsed metadata
+	SigMFRecord m_record;
+
+	///@brief Binary layout of the data file
+	SigMFSampleFormat m_format;
+
+	///@brief Path to the .sigmf-data file
+	std::string m_dataPath;
+
+	///@brief Display name of the recording, from the data file's basename
+	std::string m_recordingName;
+
+	///@brief File descriptor for the data file, or -1
+	int m_fd;
+
+	///@brief Byte offset of the first sample, from core:header_bytes
+	int64_t m_dataStartByte;
+
+	///@brief Total complex samples available
+	int64_t m_totalSamples;
+
+	///@brief Sample rate, Hz
+	double m_sampleRate;
+
+	///@brief Sample index of the next read
+	int64_t m_playCursor;
+
+	///@brief Samples delivered per AcquireData call
+	int64_t m_blockSize;
+
+	///@brief True if playback wraps at the end
+	bool m_looping;
+
+	///@brief True once playback has run off the end without looping
+	bool m_atEnd;
+
+	///@brief True while armed
+	bool m_triggerArmed;
+
+	///@brief True if the current arm is a single shot
+	bool m_triggerOneShot;
+
+	///@brief Scratch buffer for raw file data, reused between blocks
+	std::vector<uint8_t> m_readBuffer;
+
+	//The I and Q waveforms, allocated once and reused for every acquisition. Non-owning:
+	//the channel owns them, because it is the channel that will delete them. See
+	//AcquireData() for why they are reused and what that costs in in-flight blocks.
+	UniformAnalogWaveform* m_icap;
+	UniformAnalogWaveform* m_qcap;
+
+	///@brief Wall clock time of the recording start, whole seconds
+	time_t m_startTimestamp;
+
+	///@brief Wall clock time of the recording start, fractional part
+	int64_t m_startFemtoseconds;
+
+	///@brief Accumulated seconds in pread()
+	double m_tRead;
+
+	///@brief Accumulated seconds in ConvertSamples()
+	double m_tConvert;
+
+	///@brief Accumulated complex samples handed downstream
+	int64_t m_samplesDelivered;
+
+	//Oscilloscope does not provide storage for these, unlike SCPISDR, so we keep our own
+	std::map<std::pair<size_t, size_t>, float> m_channelVoltageRange;
+	std::map<std::pair<size_t, size_t>, float> m_channelOffset;
+};
+
+#endif
