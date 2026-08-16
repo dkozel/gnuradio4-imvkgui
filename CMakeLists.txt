@@ -214,6 +214,14 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/log")
 set(IMCUFOSPHOR_SHADER_SOURCE_DIRS
 	"${PROJECT_BINARY_DIR}/lib/scopehal/scopehal/shaders|${PROJECT_BINARY_DIR}/lib/scopehal/scopeprotocols/shaders|${PROJECT_BINARY_DIR}/ngscopeclient-shaders")
 
+# Where our own glslc step drops its output. Named here rather than in
+# src/imcufosphor/CMakeLists.txt because tools/ needs it too and is a sibling, not a child.
+set(IMCUFOSPHOR_APP_SPV_DIR "${PROJECT_BINARY_DIR}/src/imcufosphor/shaders-spv")
+
+# imcufosphor_attach_shaders() / imcufosphor_attach_icons(), used by every executable that
+# touches a ComputePipeline or a colour ramp.
+include("${PROJECT_SOURCE_DIR}/cmake/RuntimeData.cmake")
+
 
 # libsigmf, header-only. Builds flatc from its bundled flatbuffers on first
 # configure unless a system flatbuffers is available.
@@ -261,6 +269,11 @@ add_subdirectory("${SCOPEHAL_APPS_DIR}/src/ngscopeclient/shaders" ngscopeclient-
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/ngscopeclient-compat")
 
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/imcufosphor")
+
+# Development tools. Only the ones that link against the engine are built; the raw-Vulkan
+# repro cases under tools/vkmintest and tools/vkbisect stay hand-built from the g++ line in
+# their header comments, since their whole point is to have no dependency on this project.
+add_subdirectory("${PROJECT_SOURCE_DIR}/tools")
 
 # Make sure all of the scopehal shared libraries are built relocatable
 set_property(TARGET scopehal PROPERTY POSITION_INDEPENDENT_CODE ON)

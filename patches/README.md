@@ -30,7 +30,7 @@ scopehal maintainers once the phase 1 results are in, at which point they may pr
 `vkCmdSetEvent2` route or identify a different underlying cause.
 
 **On submodule bump:** re-apply this branch onto the new upstream commit and re-export.
-Verify with `./build/src/imcufosphor/imcufosphor` on the default device — if it reports
+Verify with `./build/tools/wfbench/wfbench --file FILE.sigmf-meta --verify` on the default device — if it reports
 `ComplexFFTFilter verification PASSED` without `SCOPEHAL_VULKAN_DEVICE_OVERRIDE`, the patch
 is live. If the fault returns, the patch was lost.
 
