@@ -18,6 +18,7 @@
 #include "../../lib/scopehal/scopeprotocols/Waterfall.h"
 
 #include "PlotAxis.h"
+#include "RecordingClock.h"
 #include "RowHistory.h"
 
 /**
@@ -119,6 +120,10 @@ public:
 	PlotAxis& GetYAxis()
 	{ return m_yAxis; }
 
+	///@brief Where the waterfall was drawn last frame, for overlays. Invalid before the first.
+	const PlotRect& GetPlotRect() const
+	{ return m_plotRect; }
+
 	void SetShowXAxis(bool show)
 	{ m_showXAxis = show; }
 
@@ -126,17 +131,23 @@ public:
 	{ return m_showXAxis; }
 
 	/**
-		@brief Supplies what is needed to label the time axis
+		@brief Supplies what is needed to label the time axis and time readouts
 
-		The waterfall itself cannot know this: upstream records no per-row timestamps
+		The waterfall itself cannot know any of this: upstream records no per-row timestamps
 		(DESIGN.md section 8.2), so the age of a row can only come from whoever produced it.
 
+		Note that this area does not count samples for itself. Sample counters are maintained
+		where samples and rows are produced - SigMFSource and PlayerSession - and handed here;
+		a display that kept its own would be a second counter to disagree with the first.
+
 		@param history		Row history from PlayerSession, or null to label in rows
+		@param clock		Recording clock from the source, or null for no time readout
 		@param sampleRate	Recording sample rate, Hz
 	 */
-	void SetTimebase(const RowHistory* history, double sampleRate)
+	void SetTimebase(const RowHistory* history, const RecordingClock* clock, double sampleRate)
 	{
 		m_rowHistory = history;
+		m_clock = clock;
 		m_sampleRate = sampleRate;
 	}
 
@@ -172,8 +183,14 @@ protected:
 	///@brief False once a container has supplied a shared axis, which it then fits itself
 	bool m_ownsXAxis;
 
+	///@brief Where the waterfall itself was drawn last frame, excluding the rulers
+	PlotRect m_plotRect;
+
 	///@brief Not owned; supplied by whoever drives playback
 	const RowHistory* m_rowHistory;
+
+	///@brief Not owned; supplied by whoever drives playback. Null means no time readout.
+	const RecordingClock* m_clock;
 
 	double m_sampleRate;
 };

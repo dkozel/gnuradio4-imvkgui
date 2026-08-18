@@ -60,7 +60,7 @@ SpectrumArea::SpectrumArea(SpectrumDensity* density, TextureManager* texmgr, con
 	m_traceColors[1] = ImVec4(1.00f, 1.00f, 1.00f, 1);	//median, white
 	m_traceColors[2] = ImVec4(0.55f, 0.55f, 0.60f, 1);	//low, grey
 	m_traceColors[3] = ImVec4(1.00f, 0.75f, 0.35f, 1);	//mid, amber
-	m_traceColors[4] = ImVec4(1.00f, 0.45f, 0.45f, 1);	//high, red
+	m_traceColors[4] = ImVec4(1.00f, 0.41f, 0.02f, 1);	//high, Orange
 
 	for(size_t i=0; i<NUM_TRACES; i++)
 	{
@@ -428,6 +428,7 @@ void SpectrumArea::Render(ImVec2 size)
 	ImVec2 plotSize(size.x - rulerWidth, size.y - rulerHeight);
 	if( (plotSize.x <= 0) || (plotSize.y <= 0) )
 	{
+		m_plotRect.valid = false;
 		ImGui::Dummy(size);
 		return;
 	}
@@ -449,9 +450,15 @@ void SpectrumArea::Render(ImVec2 size)
 
 	if( (m_densityTexture == nullptr) || (m_traceTexture == nullptr) )
 	{
+		m_plotRect.valid = false;
 		ImGui::Dummy(size);
 		return;
 	}
+
+	//Report what was actually drawn into, so an overlay never has to redo the ruler arithmetic
+	m_plotRect.pos = pos;
+	m_plotRect.size = plotSize;
+	m_plotRect.valid = true;
 
 	//Both layers are drawn flipped vertically: cell zero and pane row zero are the bottom of
 	//the amplitude axis, and ImGui's origin is the top.

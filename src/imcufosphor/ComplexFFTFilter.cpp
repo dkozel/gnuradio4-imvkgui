@@ -36,6 +36,19 @@
 
 using namespace std;
 
+/**
+	@brief Largest magnitude, in microhertz, that any value on the frequency axis may take
+
+	The axis is int64 microhertz, so the hard ceiling is 9.2e18 uHz. Sitting an order of
+	magnitude below that leaves room for a bin spacing and a center frequency to be added
+	without either the sum or the intermediate products overflowing, and 1e18 uHz is 1 THz -
+	roughly thirty times the highest carrier anyone records.
+
+	This is a bound on what the arithmetic can represent, not a statement about what is
+	physically interesting. A signal beyond it is a metadata error, and is reported as one.
+ */
+static const int64_t g_maxAxisMicrohertz = 1000000000000000000LL;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
@@ -239,8 +252,35 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 	//Bin spacing is fs/N. Unlike the real FFT in FFTFilter there is no factor of two:
 	//the bins span the whole sample rate, not half of it.
 	const double fs_per_sample = din_i->m_timescale;
+	if(fs_per_sample <= 0)
+	{
+		AddErrorMessage("Invalid inputs", "Input timescale must be positive");
+		LogError("ComplexFFTFilter: input timescale is %" PRId64 " fs/sample, expected a "
+			"positive value\n", din_i->m_timescale);
+		SetData(nullptr, 0);
+		return;
+	}
+
 	const double sample_ghz = 1e6 / fs_per_sample;
 	const double bin_uhz_raw = sample_ghz * 1e15 / nouts;
+
+	//Range check before the cast, not after.
+	//
+	//Converting an out of range double to int64 is undefined behaviour, and on x86 it yields
+	//INT64_MIN - which is nonzero, so the "bin size rounds to zero" check further down lets it
+	//through. The limit is what keeps (nouts/2) * bin_uhz inside int64 when the trigger phase
+	//is computed below.
+	const double max_bin_uhz = static_cast<double>(g_maxAxisMicrohertz) / nouts;
+	if(!isfinite(bin_uhz_raw) || (bin_uhz_raw > max_bin_uhz))
+	{
+		AddErrorMessage("Invalid inputs", "Sample rate is too high for a microhertz axis");
+		LogError("ComplexFFTFilter: bin spacing works out to %g uHz, which does not fit the "
+			"frequency axis (limit %g uHz); check the input sample rate\n",
+			bin_uhz_raw, max_bin_uhz);
+		SetData(nullptr, 0);
+		return;
+	}
+
 	const int64_t bin_uhz = round(bin_uhz_raw);
 	const auto window = m_window.GetEnumVal<FFTFilter::WindowFunction>();
 	LogTrace("bin size: %s\n", Unit(Unit::UNIT_MICROHZ).PrettyPrint(bin_uhz).c_str());
@@ -264,7 +304,21 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 
 	//The output is fftshifted, so bin 0 sits nouts/2 bins below the center frequency.
 	//m_triggerPhase carries that absolute offset, in x-axis units.
+	//
+	//Same reasoning as the bin spacing check above: this is a double converted to int64, so
+	//it has to be range checked rather than assumed. Both terms are held under
+	//g_maxAxisMicrohertz, so their difference cannot overflow.
 	const double center_uhz = din_center.GetScalarValue() * 1e6;
+	if(!isfinite(center_uhz) || (fabs(center_uhz) > static_cast<double>(g_maxAxisMicrohertz)))
+	{
+		AddErrorMessage("Invalid inputs", "Center frequency is outside the representable range");
+		LogError("ComplexFFTFilter: center frequency is %g Hz, which does not fit the frequency "
+			"axis (limit %g Hz)\n",
+			din_center.GetScalarValue(), static_cast<double>(g_maxAxisMicrohertz) / 1e6);
+		SetData(nullptr, 0);
+		return;
+	}
+
 	cap->m_triggerPhase = round(center_uhz) - (int64_t)(nouts/2) * bin_uhz;
 
 	//Amplitude calibration.

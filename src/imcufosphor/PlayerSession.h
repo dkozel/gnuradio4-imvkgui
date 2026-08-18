@@ -49,6 +49,26 @@ struct PlaybackStats
 };
 
 /**
+	@brief Sample range covered by one acquisition block, in both coordinate systems
+
+	Recording coordinates are what SigMF annotations and the wall clock speak; stream
+	coordinates are monotonic and are what elapsed durations must be measured in. See RowMark
+	for the full taxonomy and for why the ingest statistics counter is not either of them.
+
+	The recording range wraps: a block that straddles the end of the file during looped
+	playback has a recordingEnd below its recordingStart. Callers converting this to a time
+	or querying annotations over it have to handle that, which is precisely why the stream
+	range is here beside it.
+ */
+struct BlockSpan
+{
+	int64_t streamStart = 0;
+	int64_t streamEnd = 0;
+	int64_t recordingStart = 0;
+	int64_t recordingEnd = 0;
+};
+
+/**
 	@brief Owns the recording, the filter graph, and playback
 
 	The engine half of the application, kept separate from the window so that the display
@@ -139,6 +159,17 @@ public:
 	///@brief Number of waterfall rows produced since the last reset
 	int64_t GetRowsPlayed() const
 	{ return m_rowsPlayed; }
+
+	/**
+		@brief Sample range of the most recently processed acquisition block
+
+		The spectrum shows this block, so anything drawn over the spectrum - a timestamp
+		readout, an annotation span, a marker - is placed against this range rather than
+		against the play cursor, which has already moved on to the next block by the time the
+		frame is drawn.
+	 */
+	const BlockSpan& GetCurrentBlock() const
+	{ return m_currentBlock; }
 
 	///@brief Rewinds to the start of the recording and clears accumulated state
 	void Restart();
@@ -247,8 +278,11 @@ protected:
 
 	RowHistory m_rowHistory;
 
-	///@brief Play cursor when the reducer's current group started, for the row history
-	int64_t m_groupStartSample;
+	///@brief Where the reducer's current group started, in both coordinates, for the row history
+	RowMark m_groupStart;
+
+	///@brief Sample range of the block most recently pushed through the graph
+	BlockSpan m_currentBlock;
 
 	bool m_gpuTimingEnabled;
 	GpuTimer m_spectrumGpuTimer;

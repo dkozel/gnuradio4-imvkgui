@@ -125,6 +125,28 @@ protected:
 };
 
 /**
+	@brief The screen rectangle an area last drew its waveform into, excluding rulers
+
+	Exists so that an overlay can draw over a plot without duplicating the ruler arithmetic
+	that decides where the plot ends and the gutter begins. The area computes it once, as part
+	of laying itself out, and reports what it actually used rather than what a caller might
+	recompute and get subtly wrong.
+
+	@a valid is false before the first frame, and on any frame where the area declined to draw
+	because it had no data or no room.
+ */
+struct PlotRect
+{
+	///@brief Top left corner, in screen coordinates
+	ImVec2 pos = ImVec2(0, 0);
+
+	///@brief Extent in pixels
+	ImVec2 size = ImVec2(0, 0);
+
+	bool valid = false;
+};
+
+/**
 	@brief One tick on a ruler
 
 	Generated separately from the drawing so that a caller who wants gridlines, a cursor
@@ -164,6 +186,10 @@ void GenerateAxisTicks(
 /**
 	@brief Draws a horizontal ruler with the axis increasing to the right
 
+	The baseline sits GetHorizontalRulerGap() pixels below @a pos rather than on it, so the
+	line does not overlap the bottom row of the plot above. The gap is taken out of @a size,
+	which is why toggling a ruler never changes the size of the plot it labels.
+
 	@param axis		Axis to draw
 	@param pos		Top left corner, in screen coordinates
 	@param size		Extent of the ruler. Ticks hang down from the top edge.
@@ -188,5 +214,8 @@ float GetVerticalRulerWidth();
 
 ///@brief Height to reserve for a horizontal ruler
 float GetHorizontalRulerHeight();
+
+///@brief Blank space between a plot and the baseline of the ruler below it, in pixels
+float GetHorizontalRulerGap();
 
 #endif

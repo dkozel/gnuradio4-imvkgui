@@ -31,6 +31,7 @@ WaterfallArea::WaterfallArea(Waterfall* waterfall, TextureManager* texmgr, const
 	, m_xAxisFitted(false)
 	, m_ownsXAxis(true)
 	, m_rowHistory(nullptr)
+	, m_clock(nullptr)
 	, m_sampleRate(0)
 {
 }
@@ -211,6 +212,7 @@ void WaterfallArea::Render(ImVec2 size)
 	ImVec2 plotSize(size.x - rulerWidth, size.y - rulerHeight);
 	if( (plotSize.x <= 0) || (plotSize.y <= 0) )
 	{
+		m_plotRect.valid = false;
 		ImGui::Dummy(size);
 		return;
 	}
@@ -229,7 +231,7 @@ void WaterfallArea::Render(ImVec2 size)
 	double spanFs = 0;
 	if( (m_rowHistory != nullptr) && (m_sampleRate > 0) )
 	{
-		int64_t spanSamples = m_rowHistory->GetSampleSpan(static_cast<size_t>(plotSize.y));
+		int64_t spanSamples = m_rowHistory->GetStreamSpan(static_cast<size_t>(plotSize.y));
 		spanFs = spanSamples * (FS_PER_SECOND / m_sampleRate);
 	}
 	if(spanFs > 0)
@@ -248,13 +250,45 @@ void WaterfallArea::Render(ImVec2 size)
 
 	if(m_texture == nullptr)
 	{
+		m_plotRect.valid = false;
 		ImGui::Dummy(size);
 		return;
 	}
 
+	//Report what was actually drawn into, so an overlay never has to redo the ruler arithmetic
+	m_plotRect.pos = pos;
+	m_plotRect.size = plotSize;
+	m_plotRect.valid = true;
+
 	//Flipped vertically: the shader writes row 0 as the newest, and ImGui's origin is top
 	//left, so sampling v from 1 to 0 puts the newest row at the top
 	ImGui::Image(m_texture->GetTexture(), plotSize, ImVec2(0, 1), ImVec2(1, 0));
+
+	//Timestamp readout for the row under the cursor.
+	//
+	//Screen y from the top of the plot is exactly the row's age, with no modular arithmetic
+	//needed on this side: the tone map resolves the ring so that the last output row is the
+	//newest (WaterfallToneMap.glsl:56-63), and the blit above is one texel per pixel with v
+	//flipped. RowHistory is indexed by age, so the two line up directly.
+	//
+	//The time comes from the row's recording coordinate, not its stream coordinate. Stream
+	//coordinates keep counting up as playback loops, so a clock pinned to them would claim
+	//the recording contains data it never did.
+	if(ImGui::IsItemHovered() && (m_rowHistory != nullptr) && (m_clock != nullptr))
+	{
+		float dy = ImGui::GetMousePos().y - pos.y;
+		if(dy >= 0)
+		{
+			RowMark row;
+			if(m_rowHistory->GetRow(static_cast<size_t>(dy), row))
+			{
+				ImGui::BeginTooltip();
+				ImGui::TextUnformatted(
+					RecordingClock::Format(m_clock->TimeOfSample(row.recordingStart)).c_str());
+				ImGui::EndTooltip();
+			}
+		}
+	}
 
 	DrawVerticalRuler(m_yAxis, ImVec2(pos.x + plotSize.x, pos.y), ImVec2(rulerWidth, plotSize.y));
 

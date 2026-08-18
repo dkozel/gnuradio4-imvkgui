@@ -137,9 +137,20 @@ float GetHorizontalRulerHeight()
 	return 2.5 * ImGui::GetFontSize();
 }
 
+float GetHorizontalRulerGap()
+{
+	return 4;
+}
+
 void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 {
-	if( (size.x <= 0) || (size.y <= 0) )
+	//The gap comes out of the ruler's own height, not out of the plot above it: a baseline
+	//drawn exactly on the boundary straddles it and eats the bottom row of the image, and
+	//moving the boundary instead would resize the image every time the ruler is toggled.
+	float gap = GetHorizontalRulerGap();
+	float top = pos.y + gap;
+	float height = size.y - gap;
+	if( (size.x <= 0) || (height <= 0) )
 		return;
 
 	auto list = ImGui::GetWindowDrawList();
@@ -151,10 +162,10 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 	GenerateAxisTicks(axis, size.x, 6 * fontSize, ticks);
 
 	//Baseline along the top, with ticks hanging below it
-	list->AddLine(pos, ImVec2(pos.x + size.x, pos.y), color, 1.5f);
+	list->AddLine(ImVec2(pos.x, top), ImVec2(pos.x + size.x, top), color, 1.5f);
 
-	float majorLen = size.y * 0.35f;
-	float minorLen = size.y * 0.18f;
+	float majorLen = height * 0.35f;
+	float minorLen = height * 0.18f;
 
 	for(auto& t : ticks)
 	{
@@ -163,7 +174,7 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 			continue;
 
 		float len = t.major ? majorLen : minorLen;
-		list->AddLine(ImVec2(x, pos.y), ImVec2(x, pos.y + len), color, t.major ? 1.5f : 1.0f);
+		list->AddLine(ImVec2(x, top), ImVec2(x, top + len), color, t.major ? 1.5f : 1.0f);
 
 		if(!t.major)
 			continue;
@@ -177,7 +188,7 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 		tx = max(tx, pos.x);
 		tx = min(tx, pos.x + size.x - textSize.x);
 
-		list->AddText(ImVec2(tx, pos.y + majorLen), color, label.c_str());
+		list->AddText(ImVec2(tx, top + majorLen), color, label.c_str());
 	}
 }
 

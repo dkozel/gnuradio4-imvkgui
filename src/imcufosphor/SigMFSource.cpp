@@ -23,6 +23,34 @@
 using namespace std;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Metadata value limits
+//
+// A .sigmf-meta file is untrusted input: it is a JSON document that may have been written by
+// anything. Everything below is eventually divided by, or scaled into an int64 microhertz
+// axis, so a value that is merely implausible here becomes undefined behaviour three filters
+// downstream rather than a bad-looking display. Check once, at load, and say so on the
+// console; the rest of the pipeline may then assume the numbers are usable.
+
+///@brief Slowest sample rate we will accept, Hz. Below this the femtoseconds per sample overflows int64.
+static const double g_minSampleRate = 1e-3;
+
+///@brief Fastest sample rate we will accept, Hz. Above this the microhertz bin spacing overflows int64.
+static const double g_maxSampleRate = 1e12;
+
+/**
+	@brief Sample rate substituted when the metadata does not supply a usable one
+
+	core:sample_rate is optional in the SigMF spec, so a recording without one is legal and
+	must still open. Every consumer divides by the rate, though, so it cannot be left at zero:
+	that is what made the frequency axis read -4.13 THz. One megahertz is an arbitrary but
+	bounded stand-in, and the warning says the axis is not to scale.
+ */
+static const double g_defaultSampleRate = 1e6;
+
+///@brief Largest center frequency magnitude we will accept, Hz. Above this, Hz*1e6 overflows int64.
+static const double g_maxCenterFrequency = 1e12;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SigMFSampleFormat
 
 bool SigMFSampleFormat::Parse(const string& str, string& errorOut)
@@ -154,6 +182,7 @@ SigMFSource::SigMFSource(const string& metaPath, const string& dataPath)
 	, m_totalSamples(0)
 	, m_sampleRate(0)
 	, m_playCursor(0)
+	, m_samplesPlayed(0)
 	, m_blockSize(65536)
 	, m_looping(true)
 	, m_atEnd(false)
@@ -245,15 +274,47 @@ void SigMFSource::LoadMetadata(const string& metaPath, const string& dataPath)
 		return;
 	}
 
-	//Sample rate is optional in the spec. Every recording in the demo dataset has one, but
-	//a missing rate is not fatal - it only means the frequency axis has no scale, so leave
-	//it to the caller to supply a fallback.
-	if(global.sample_rate.has_value() && (global.sample_rate.value() > 0))
-		m_sampleRate = global.sample_rate.value();
-	else
+	//Sample rate is optional in the spec, and a missing one is not fatal - it only means the
+	//frequency axis has no scale. It cannot be left at zero, though: AcquireData() would then
+	//emit a timescale of one femtosecond per sample, an implied 1 PHz rate, and the bin
+	//spacing computed from it overflows int64 in ComplexFFTFilter. Substitute a bounded
+	//default instead, and say which.
+	if(!global.sample_rate.has_value())
 	{
-		m_sampleRate = 0;
-		LogWarning("SigMF recording has no core:sample_rate; a fallback must be supplied\n");
+		m_sampleRate = g_defaultSampleRate;
+		LogWarning("SigMF recording has no core:sample_rate; assuming %g Hz. "
+			"The frequency axis will not be to scale.\n", m_sampleRate);
+	}
+	else if(!isfinite(global.sample_rate.value()) ||
+		(global.sample_rate.value() < g_minSampleRate) ||
+		(global.sample_rate.value() > g_maxSampleRate))
+	{
+		//Note that this also catches a negative rate, which was previously indistinguishable
+		//from an absent one and silently became zero
+		LogError("SigMF core:sample_rate is %g Hz, outside the supported range %g to %g Hz; "
+			"assuming %g Hz instead\n",
+			global.sample_rate.value(), g_minSampleRate, g_maxSampleRate, g_defaultSampleRate);
+		m_sampleRate = g_defaultSampleRate;
+	}
+	else
+		m_sampleRate = global.sample_rate.value();
+
+	//Center frequencies are scaled into an int64 microhertz axis downstream, so one that
+	//cannot fit is a range error rather than an exotic band. Checked here, once per recording,
+	//rather than in GetExactCenterFrequency(), which runs once per acquisition and would
+	//repeat the message a thousand times a second. That accessor clamps silently.
+	for(size_t i=0; i<m_record.captures.size(); i++)
+	{
+		auto& c = m_record.captures[i].get<sigmf::core::DescrT>();
+		if(!c.frequency.has_value())
+			continue;
+
+		double f = c.frequency.value();
+		if(!isfinite(f) || (fabs(f) > g_maxCenterFrequency))
+		{
+			LogError("SigMF capture %zu has core:frequency %g Hz, outside the supported range "
+				"+/- %g Hz; treating it as 0 Hz\n", i, f, g_maxCenterFrequency);
+		}
 	}
 
 	//core:metadata_only means there is deliberately no data file
@@ -294,12 +355,27 @@ void SigMFSource::LoadMetadata(const string& metaPath, const string& dataPath)
 		return;
 	}
 
-	//Skip any header the first capture declares
+	//Skip any header the first capture declares.
+	//
+	//header_bytes is a uint64 in the generated metadata type, so a negative value in the JSON
+	//wraps to something near 2^64 and then narrows to a negative int64. One bound catches
+	//both that and a header that simply runs past the end of the file: either way the offset
+	//is unusable, and left alone it inflates m_totalSamples and makes every pread() fail.
 	if(!m_record.captures.empty())
 	{
 		auto& c0 = m_record.captures[0].get<sigmf::core::DescrT>();
 		if(c0.header_bytes.has_value())
-			m_dataStartByte = c0.header_bytes.value();
+		{
+			uint64_t hdr = c0.header_bytes.value();
+			if(hdr > static_cast<uint64_t>(st.st_size))
+			{
+				LogError("SigMF core:header_bytes is %" PRIu64 ", which is negative or past the "
+					"end of a %" PRId64 " byte data file; assuming 0\n",
+					hdr, static_cast<int64_t>(st.st_size));
+				hdr = 0;
+			}
+			m_dataStartByte = static_cast<int64_t>(hdr);
+		}
 	}
 
 	int64_t usableBytes = st.st_size - m_dataStartByte;
@@ -315,19 +391,150 @@ void SigMFSource::LoadMetadata(const string& metaPath, const string& dataPath)
 		return;
 	}
 
-	//Recording start time, for waveform timestamps. Fall back to the data file mtime.
-	GetTimestampOfFile(m_dataPath, m_startTimestamp, m_startFemtoseconds);
+	//The recording's own idea of when it was taken, one epoch per capture segment.
+	//
+	//core:datetime is what makes an absolute timestamp possible at all. Without it the most
+	//anything downstream can honestly say is how far into the recording a sample sits, and the
+	//clock reports that rather than inventing a wall clock.
+	m_clock.Clear();
+	for(size_t i=0; i<m_record.captures.size(); i++)
+	{
+		auto& c = m_record.captures[i].get<sigmf::core::DescrT>();
+		m_clock.AddCapture(static_cast<int64_t>(c.sample_start.value_or(0)), c.datetime);
+	}
+	m_clock.Finalize(m_sampleRate);
+
+	//Annotations, converted out of libsigmf's types once here so that nothing downstream has
+	//to see them. See BuildAnnotationSet() for what gets dropped and why.
+	BuildAnnotationSet(m_record, m_totalSamples, m_annotations);
+
+	//Waveform timestamps, which scopehal wants populated whether or not the real time is
+	//known. Seed them from the metadata when it is there and from the data file's mtime when
+	//it is not.
+	//
+	//The mtime is a guess, and it is allowed to reach scopehal's fields and nowhere else.
+	//dect6.sigmf-meta was recorded in 2022 and misspells its key as "core::datetime" with two
+	//colons, so it parses as absent; labelling a display from the mtime would confidently date
+	//that recording to whenever the file was last copied. Anything user-facing asks
+	//GetClock() instead, which says when it does not know.
+	auto t0 = m_clock.TimeOfSample(0);
+	if(t0.absolute)
+	{
+		m_startTimestamp = t0.sec;
+		m_startFemtoseconds = t0.fs;
+	}
+	else
+		GetTimestampOfFile(m_dataPath, m_startTimestamp, m_startFemtoseconds);
 
 	m_recordingName = BaseName(m_dataPath);
 	m_valid = true;
 
-	LogTrace("Opened SigMF recording %s: %s, %" PRId64 " samples at %g Hz, %zu captures, %zu annotations\n",
+	LogTrace("Opened SigMF recording %s: %s, %" PRId64 " samples at %g Hz, %zu captures, "
+		"%zu annotations, %s\n",
 		m_dataPath.c_str(),
 		m_format.ToString().c_str(),
 		m_totalSamples,
 		m_sampleRate,
 		m_record.captures.size(),
-		m_record.annotations.size());
+		m_record.annotations.size(),
+		t0.absolute
+			? ("starting " + RecordingClock::Format(t0)).c_str()
+			: "no usable core:datetime, times will be relative");
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Annotation conversion
+
+void BuildAnnotationSet(const SigMFRecord& rec, int64_t totalSamples, AnnotationSet& out)
+{
+	out.Clear();
+
+	//get() is non-const in libsigmf, so reading a const record needs this. The alternative is
+	//taking a non-const reference here and propagating that all the way up to the caller,
+	//which would mean the display could not hold a const source.
+	auto& annotations = const_cast<SigMFRecord&>(rec).annotations;
+
+	size_t noStart = 0;
+	size_t swapped = 0;
+	size_t clamped = 0;
+
+	for(size_t i=0; i<annotations.size(); i++)
+	{
+		auto& a = annotations[i].get<sigmf::core::DescrT>();
+
+		//An annotation with no core:sample_start cannot be placed on either axis. Skipping it
+		//is also what keeps us away from libsigmf's own helper, which continues without
+		//advancing its iterator on exactly this input and hangs (sigmf_helpers.h:123-125).
+		if(!a.sample_start.has_value())
+		{
+			noStart++;
+			continue;
+		}
+
+		Annotation ann;
+		ann.sampleStart = static_cast<int64_t>(a.sample_start.value());
+		if(ann.sampleStart < 0)
+		{
+			noStart++;
+			continue;
+		}
+
+		//core:sample_count is optional. Absent means a point in time rather than a span, which
+		//the model represents as a zero length annotation and the overlay draws as a line.
+		if(a.sample_count.has_value())
+		{
+			int64_t count = static_cast<int64_t>(a.sample_count.value());
+			if(count < 0)
+				count = 0;
+			ann.sampleEnd = ann.sampleStart + count;
+		}
+		else
+			ann.sampleEnd = ann.sampleStart;
+
+		//Clamp to the recording. An end past the last sample would place a box below the oldest
+		//row the waterfall can ever show.
+		if( (totalSamples > 0) && (ann.sampleEnd > totalSamples) )
+		{
+			ann.sampleEnd = totalSamples;
+			clamped++;
+		}
+
+		//The two frequency edges are independently optional in the schema. Both present is the
+		//only case that describes a band; one alone is not half a band, it is no band.
+		if(a.freq_lower_edge.has_value() && a.freq_upper_edge.has_value())
+		{
+			double lo = a.freq_lower_edge.value();
+			double hi = a.freq_upper_edge.value();
+
+			if(isfinite(lo) && isfinite(hi))
+			{
+				//Reversed edges are a data error, not a negative width rectangle
+				if(lo > hi)
+				{
+					std::swap(lo, hi);
+					swapped++;
+				}
+
+				ann.freqLoHz = lo;
+				ann.freqHiHz = hi;
+				ann.hasFreq = true;
+			}
+		}
+
+		ann.label = a.label;
+		ann.description = a.description;
+		ann.comment = a.comment;
+		ann.generator = a.generator;
+		ann.colorKey = ColorKeyForLabel(ann.label);
+
+		out.Add(ann);
+	}
+
+	out.Finalize();
+
+	LogTrace("Built annotation set: %zu usable of %zu (%zu with no sample_start, "
+		"%zu with swapped frequency edges, %zu clamped to the end of the recording)\n",
+		out.size(), annotations.size(), noStart, swapped, clamped);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -363,7 +570,14 @@ double SigMFSource::GetExactCenterFrequency() const
 
 	//A center frequency of zero is legitimate - tone_signal.sigmf-meta in the demo dataset
 	//is a baseband recording - so absent and zero must not be conflated
-	return c.frequency.value_or(0.0);
+	double f = c.frequency.value_or(0.0);
+
+	//Clamp silently: LoadMetadata() has already logged this once, and we are called once per
+	//acquisition
+	if(!isfinite(f) || (fabs(f) > g_maxCenterFrequency))
+		return 0;
+
+	return f;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -698,7 +912,13 @@ bool SigMFSource::AcquireData()
 	double tConvertStart = GetTime();
 	ConvertSamples(m_readBuffer.data(), goodSamples, icap, qcap);
 	m_tConvert += GetTime() - tConvertStart;
+
+	//Two counters, incremented together and reset differently on purpose. m_samplesDelivered
+	//is an ingest statistic that ResetIngestStats() zeroes; m_samplesPlayed is the playback
+	//timebase and nothing is allowed to zero it. See the Playback timebase section of the
+	//header for why conflating them breaks the waterfall's time axis.
 	m_samplesDelivered += goodSamples;
+	m_samplesPlayed += goodSamples;
 
 	icap->MarkSamplesModifiedFromCpu();
 	qcap->MarkSamplesModifiedFromCpu();

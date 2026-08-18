@@ -190,6 +190,15 @@ public:
 	 */
 	void SetPersistence(double riseSec, double decaySec);
 
+	/**
+		@brief The persistence decay time constant, in seconds
+
+		Exposed so that anything drawn over the density map can fade on the same constant
+		rather than introducing a second one. One knob, one look.
+	 */
+	double GetDecaySeconds() const
+	{ return m_decaySec; }
+
 	///@brief Tells the filter how fast spectra arrive, for the persistence conversion
 	void SetSpectrumRate(double spectraPerSec)
 	{ m_spectrumRate = spectraPerSec; }

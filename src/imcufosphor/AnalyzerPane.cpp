@@ -32,13 +32,16 @@ AnalyzerPane::AnalyzerPane(PlayerSession* session, TextureManager* texmgr, const
 	m_spectrumArea->SetXAxis(m_xAxis);
 	m_waterfallArea->SetXAxis(m_xAxis);
 
-	//We draw the shared ruler once, between the two plots
-	m_spectrumArea->SetShowXAxis(false);
-	m_waterfallArea->SetShowXAxis(false);
+	//Each area draws its own ruler for the shared axis, under the plot it belongs to. They
+	//cannot disagree - there is one axis - and either can be turned off on its own.
+	m_spectrumArea->SetShowXAxis(true);
+	m_waterfallArea->SetShowXAxis(true);
 
 	//Only the waterfall needs the timebase; the spectrum's vertical axis is amplitude
 	m_waterfallArea->SetTimebase(
-		&session->GetRowHistory(), session->GetSource()->GetRecordingSampleRate());
+		&session->GetRowHistory(),
+		&session->GetSource()->GetClock(),
+		session->GetSource()->GetRecordingSampleRate());
 }
 
 AnalyzerPane::~AnalyzerPane()
@@ -132,9 +135,14 @@ void AnalyzerPane::Render(ImVec2 size)
 	float rulerWidth = GetVerticalRulerWidth();
 	float rulerHeight = GetHorizontalRulerHeight();
 
-	//The shared ruler and both Y gutters come out of the total before the plots are split
+	//Whichever frequency rulers are switched on, plus both Y gutters, come out of the total
+	//before the plots are split. Reserving per ruler rather than once for the pair is what
+	//keeps the split fraction meaning the same thing whichever ones are showing.
+	float specRuler = m_spectrumArea->GetShowXAxis() ? rulerHeight : 0;
+	float fallRuler = m_waterfallArea->GetShowXAxis() ? rulerHeight : 0;
+
 	float plotWidth = size.x - rulerWidth;
-	float plotsHeight = size.y - rulerHeight;
+	float plotsHeight = size.y - specRuler - fallRuler;
 	if( (plotWidth <= 0) || (plotsHeight <= 0) )
 	{
 		ImGui::Dummy(size);
@@ -150,23 +158,46 @@ void AnalyzerPane::Render(ImVec2 size)
 
 	auto pos = ImGui::GetCursorScreenPos();
 
-	//Mouse first, so a pan takes effect on the frame it happens rather than the next one
-	HandleMouse(pos, ImVec2(plotWidth, plotsHeight));
+	//Mouse first, so a pan takes effect on the frame it happens rather than the next one.
+	//The rulers are inside the region: dragging on one pans the axis it labels, which is
+	//what a ruler under the cursor looks like it should do.
+	HandleMouse(pos, ImVec2(plotWidth, plotsHeight + specRuler + fallRuler));
 	ClampXAxis(plotWidth);
 
-	//Spectrum on top. Both areas are handed the full width including their gutter; each
-	//carves its own out, and since both reserve the same width the plots line up.
+	//Spectrum on top. Both areas are handed the full width including their gutter and the
+	//height of their own ruler; each carves both out, and since both reserve the same width
+	//the plots line up.
 	if(specHeight > 0)
-		m_spectrumArea->Render(ImVec2(size.x, specHeight));
+		m_spectrumArea->Render(ImVec2(size.x, specHeight + specRuler));
 
 	if(fallHeight > 0)
-		m_waterfallArea->Render(ImVec2(size.x, fallHeight));
+		m_waterfallArea->Render(ImVec2(size.x, fallHeight + fallRuler));
 
-	//One frequency ruler for both, at the bottom
-	DrawHorizontalRuler(
-		*m_xAxis,
-		ImVec2(pos.x, pos.y + plotsHeight),
-		ImVec2(plotWidth, rulerHeight));
+	//Annotations over both, once each area has reported the rectangle it actually drew into.
+	//After rather than before, so a box sits on top of the waveform it describes rather than
+	//under it; ImGui's draw list is ordered by submission.
+	if(m_overlay.GetEnabled())
+	{
+		auto dl = ImGui::GetWindowDrawList();
+		auto source = m_session->GetSource();
+		const auto& annotations = source->GetAnnotations();
+
+		m_overlay.DrawOnSpectrum(
+			dl,
+			m_spectrumArea->GetPlotRect(),
+			*m_xAxis,
+			annotations,
+			m_session->GetCurrentBlock(),
+			source->GetRecordingSampleRate(),
+			m_session->GetDensity()->GetDecaySeconds());
+
+		m_overlay.DrawOnWaterfall(
+			dl,
+			m_waterfallArea->GetPlotRect(),
+			*m_xAxis,
+			annotations,
+			m_session->GetRowHistory());
+	}
 
 	ImGui::SetCursorScreenPos(pos);
 	ImGui::Dummy(size);

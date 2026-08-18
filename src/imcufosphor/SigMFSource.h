@@ -19,6 +19,9 @@
 #include "sigmf.h"
 #include "sigmf_helpers.h"
 
+#include "Annotation.h"
+#include "RecordingClock.h"
+
 #include <string>
 #include <vector>
 
@@ -102,6 +105,18 @@ public:
 	AcquireData() reads a bounded block at the play cursor and converts it, so memory stays
 	flat regardless of file size. The demo dataset includes 2.9 GB recordings.
  */
+/**
+	@brief Converts a record's annotations into the display-neutral model
+
+	The one place SigMFRecord and AnnotationSet are both visible. Free rather than a method so
+	that it can be tested against a hand-built record with no file and no Vulkan.
+
+	@param rec				Parsed metadata
+	@param totalSamples		Length of the recording, used to clamp ends that run past it
+	@param out				Cleared, filled and finalized
+ */
+void BuildAnnotationSet(const SigMFRecord& rec, int64_t totalSamples, AnnotationSet& out);
+
 class SigMFSource : public Oscilloscope
 {
 public:
@@ -183,6 +198,50 @@ public:
 	///@brief True once the cursor has run off the end with looping disabled
 	bool AtEnd() const
 	{ return m_atEnd; }
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Playback timebase
+	//
+	// Deliberately not in the ingest accounting section below, and deliberately not served by
+	// GetSamplesDelivered(). That counter looks like it would do - it also counts samples, and
+	// monotonically - but ResetIngestStats() zeroes it, so anything built on it silently jumps
+	// backwards the first time someone adds a "reset stats" button. An instrumentation counter
+	// must never be a time base. These two are the time base.
+
+	/**
+		@brief Samples handed downstream since the source was constructed
+
+		Stream coordinates: monotonic, never reset, unaffected by looping or seeking. A
+		difference between two of these is always a real elapsed duration, which is what makes
+		it the right thing to measure a time axis span in.
+
+		Contrast GetPlayCursor(), which is recording coordinates and wraps to zero on every
+		loop - at high sample rates the whole recording goes past about once a second.
+	 */
+	int64_t GetSamplesPlayed() const
+	{ return m_samplesPlayed; }
+
+	/**
+		@brief Maps recording sample indices to the instants they were captured
+
+		Built once at open from the captures' core:datetime. Ask it rather than deriving
+		timestamps from the waveform fields: those carry a fallback epoch for scopehal's
+		benefit and cannot say whether the time is real.
+	 */
+	const RecordingClock& GetClock() const
+	{ return m_clock; }
+
+	/**
+		@brief The recording's annotations, in display-neutral form
+
+		Built once at open. notes/annotation-overlay-plan.md §A1 put this in PlayerSession;
+		it lives here instead, beside GetClock(), because the two are the same kind of thing -
+		a display-neutral view derived from the metadata at load - and the metadata is here.
+		The property that actually mattered is unchanged: nothing downstream of this class
+		sees libsigmf.
+	 */
+	const AnnotationSet& GetAnnotations() const
+	{ return m_annotations; }
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Ingest cost accounting
@@ -340,6 +399,15 @@ protected:
 
 	///@brief Sample index of the next read
 	int64_t m_playCursor;
+
+	///@brief Samples handed downstream since construction. Monotonic; ResetIngestStats() must not touch it.
+	int64_t m_samplesPlayed;
+
+	///@brief Recording sample index to wall clock time, from the captures' core:datetime
+	RecordingClock m_clock;
+
+	///@brief The record's annotations, converted out of libsigmf's types at load
+	AnnotationSet m_annotations;
 
 	///@brief Samples delivered per AcquireData call
 	int64_t m_blockSize;

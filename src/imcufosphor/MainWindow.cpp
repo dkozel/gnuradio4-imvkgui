@@ -259,6 +259,21 @@ void MainWindow::RenderControls()
 	ImGui::SameLine();
 	ImGui::Text("| graph %.1f ms  tonemap %.1f ms  present %.1f ms",
 		m_msStep, m_msToneMap, m_msPresent);
+
+	//Where in the recording the spectrum on screen came from, and when that was captured.
+	//
+	//Taken from the block the graph last processed rather than from the play cursor, which has
+	//already advanced past it by the time this frame is drawn. Recording coordinates, because
+	//those are what a wall clock and a SigMF annotation are both pinned to; the row counter
+	//above is the stream coordinate and keeps climbing as playback loops.
+	const auto& block = m_session->GetCurrentBlock();
+	const auto& clock = source->GetClock();
+
+	ImGui::Text("%s | %.3f of %.3f s into recording%s",
+		RecordingClock::Format(clock.TimeOfSample(block.recordingStart)).c_str(),
+		clock.SecondsIntoRecording(block.recordingStart),
+		clock.SecondsIntoRecording(source->GetTotalSamples()),
+		clock.HasAbsoluteTime() ? "" : "  (no usable core:datetime, so times are relative)");
 }
 
 void MainWindow::RenderSpectrumControls()
@@ -267,6 +282,39 @@ void MainWindow::RenderSpectrumControls()
 	bool dens = m_pane->GetSpectrumArea()->GetDensityVisible();
 	if(ImGui::Checkbox("Density", &dens))
 		m_pane->GetSpectrumArea()->SetDensityVisible(dens);
+
+	//Frequency rulers, one per plot. Turning one off gives its height back to the plots
+	//rather than to the plot it was under, so the split stays where the slider says.
+	ImGui::SameLine();
+	bool specAxis = m_pane->GetSpectrumArea()->GetShowXAxis();
+	if(ImGui::Checkbox("Spectrum Hz", &specAxis))
+		m_pane->GetSpectrumArea()->SetShowXAxis(specAxis);
+
+	ImGui::SameLine();
+	bool fallAxis = m_pane->GetWaterfallArea()->GetShowXAxis();
+	if(ImGui::Checkbox("Waterfall Hz", &fallAxis))
+		m_pane->GetWaterfallArea()->SetShowXAxis(fallAxis);
+
+	//Annotations. Off by default: the dense sets in the demo dataset - 9182 on the omnisig
+	//recording - are worth opting into rather than being met with.
+	ImGui::SameLine();
+	bool annos = m_pane->GetOverlay().GetEnabled();
+	if(ImGui::Checkbox("Annotations", &annos))
+		m_pane->GetOverlay().SetEnabled(annos);
+
+	//What the recording has, how many are on screen, and how many boxes that became after
+	//coalescing. The quickest way to tell "there are none here" from "the overlay is broken",
+	//and the matched count exceeding the set size is the expected sign of looped playback
+	//putting the same annotations on screen more than once.
+	size_t total = m_session->GetSource()->GetAnnotations().size();
+	if(total > 0)
+	{
+		ImGui::SameLine();
+		ImGui::Text("(%zu in set, %zu on screen, %zu boxes)",
+			total,
+			m_pane->GetOverlay().GetLastMatchedCount(),
+			m_pane->GetOverlay().GetLastDrawnCount());
+	}
 
 	ImGui::SameLine();
 	ImGui::SetNextItemWidth(120 * GetDpiScale());

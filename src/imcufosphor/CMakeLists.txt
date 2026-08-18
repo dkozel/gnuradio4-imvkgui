@@ -19,9 +19,11 @@ add_subdirectory(shaders shaders-spv)
 # drive the real pipeline rather than a reimplementation of it. A benchmark that measures
 # something other than what the application runs is worse than no benchmark.
 add_library(imcufosphor-core STATIC
+	Annotation.cpp
 	ComplexFFTFilter.cpp
 	GpuTimer.cpp
 	PlayerSession.cpp
+	RecordingClock.cpp
 	SigMFSource.cpp
 	SpectrumDensity.cpp
 	SpectrumReducer.cpp
@@ -62,6 +64,7 @@ add_executable(sigmf-spectrum
 	main.cpp
 	MainWindow.cpp
 	AnalyzerPane.cpp
+	AnnotationOverlay.cpp
 	PlotAxis.cpp
 	SpectrumArea.cpp
 	WaterfallArea.cpp

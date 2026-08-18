@@ -28,7 +28,6 @@ PlayerSession::PlayerSession(SigMFSource* source, shared_ptr<QueueHandle> queue)
 	, m_rowsPlayed(0)
 	, m_rangeMin(-100)
 	, m_rangeMax(-20)
-	, m_groupStartSample(0)
 	, m_gpuTimingEnabled(false)
 {
 	auto chan = dynamic_cast<ComplexChannel*>(m_source->GetChannel(0));
@@ -196,8 +195,14 @@ void PlayerSession::Restart()
 	m_density->ClearSweeps();
 	m_waterfall->ClearSweeps();
 	m_rowHistory.Clear();
-	m_groupStartSample = 0;
 	m_rowsPlayed = 0;
+
+	//Only the recording coordinate rewinds. The stream coordinate is a monotonic count of
+	//samples played and a restart does not un-play them; zeroing it here would make the
+	//waterfall's time axis jump backwards across the restart.
+	m_groupStart.recordingStart = 0;
+	m_groupStart.streamStart = m_source->GetSamplesPlayed();
+	m_currentBlock = BlockSpan();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -208,12 +213,23 @@ PlayerSession::StepResult PlayerSession::StepOneBlock()
 	//Acquire first, outside the command buffer. AcquireData() is host work - a read and a
 	//sample conversion - and recording it into a command buffer is not a thing that can be
 	//done; the GPU stages below consume its output.
+	//Where this block starts, captured before AcquireData() advances both counters past it
+	int64_t blockRecordingStart = m_source->GetPlayCursor();
+	int64_t blockStreamStart = m_source->GetSamplesPlayed();
+
 	double t0 = GetTime();
 	bool got = m_source->AcquireData() && m_source->PopPendingWaveform();
 	double t1 = GetTime();
 	m_stats.acquireSec += t1 - t0;
 	if(!got)
 		return STEP_FAILED;
+
+	//...and where it ends, read back rather than assumed: a block at the end of the recording
+	//is short, and with looping on, the cursor has already wrapped to the start of the file.
+	m_currentBlock.recordingStart = blockRecordingStart;
+	m_currentBlock.recordingEnd = m_source->GetPlayCursor();
+	m_currentBlock.streamStart = blockStreamStart;
+	m_currentBlock.streamEnd = m_source->GetSamplesPlayed();
 
 	//The whole block in one command buffer and one submit.
 	//
@@ -277,15 +293,20 @@ PlayerSession::StepResult PlayerSession::StepOneBlock()
 	{
 		m_rowsPlayed++;
 
-		//Record which samples this row covers, before the next acquisition moves the cursor.
-		//The reducer may have folded several blocks into this row, so the row starts where
-		//the group started, not where this block did.
-		//Samples delivered, not the play cursor. The cursor wraps to zero every time
-		//playback loops - at these rates the whole recording goes past about once a second -
-		//and a wrapped pair of rows gives a negative time span.
+		//Record which samples this row covers. The reducer may have folded several blocks into
+		//this row, so the row starts where the group started, not where this block did.
+		//
+		//Both coordinates, because they answer different questions and neither can be derived
+		//from the other: the stream count gives the row's age, which the time axis needs and
+		//which must not wrap; the recording index says which part of the file it shows, which
+		//is what a wall clock and a SigMF annotation are pinned to. A modulo of one to get the
+		//other would break the moment seeking is added.
 		m_rowHistory.SetDepth(m_waterfall->GetHeight());
-		m_rowHistory.Push(m_groupStartSample);
-		m_groupStartSample = m_source->GetSamplesDelivered();
+		m_rowHistory.Push(m_groupStart.streamStart, m_groupStart.recordingStart);
+
+		//The next group starts where this block ended
+		m_groupStart.streamStart = m_currentBlock.streamEnd;
+		m_groupStart.recordingStart = m_currentBlock.recordingEnd;
 	}
 
 	return advanced ? STEP_ROW : STEP_BLOCK;

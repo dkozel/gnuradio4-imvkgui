@@ -154,6 +154,10 @@ public:
 	PlotAxis& GetYAxis()
 	{ return m_yAxis; }
 
+	///@brief Where the spectrum was drawn last frame, for overlays. Invalid before the first.
+	const PlotRect& GetPlotRect() const
+	{ return m_plotRect; }
+
 	/**
 		@brief Whether to draw the frequency ruler
 
@@ -281,6 +285,9 @@ protected:
 	PlotAxis m_yAxis;
 
 	bool m_showXAxis;
+
+	///@brief Where the spectrum itself was drawn last frame, excluding the rulers
+	PlotRect m_plotRect;
 
 	///@brief True once the frequency axis has been fitted to real data
 	bool m_xAxisFitted;

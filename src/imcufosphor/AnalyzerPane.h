@@ -11,6 +11,7 @@
 #ifndef AnalyzerPane_h
 #define AnalyzerPane_h
 
+#include "AnnotationOverlay.h"
 #include "PlayerSession.h"
 #include "PlotAxis.h"
 #include "SpectrumArea.h"
@@ -29,10 +30,17 @@
 
 	@par Division of labour
 
-	Follows ngscopeclient. The container owns the shared X axis and draws exactly one ruler
-	for it (WaveformGroup.cpp:285); each area owns its own Y axis, whose meaning differs -
-	amplitude for the spectrum, age for the waterfall - and draws it into a right hand gutter
-	whose width the container reserves (WaveformGroup.cpp:250-251).
+	Follows ngscopeclient. The container owns the shared X axis and the layout; each area
+	owns its own Y axis, whose meaning differs - amplitude for the spectrum, age for the
+	waterfall - and draws it into a right hand gutter whose width the container reserves
+	(WaveformGroup.cpp:250-251).
+
+	Each area also draws a ruler for the shared X axis under its own plot, and each can be
+	switched off separately (SetShowXAxis). ngscopeclient draws one ruler for a whole group
+	(WaveformGroup.cpp:285) because its stacked plots are all the same kind of thing; here
+	the spectrum and the waterfall are read separately often enough to be worth labelling
+	separately. The container reserves the height of whichever rulers are showing, so an
+	area's plot is the same size whether or not it has one under it.
 
 	Everything about the plots themselves stays in the areas. This class knows about layout,
 	the shared axis, and the mouse.
@@ -54,7 +62,7 @@ public:
 	 */
 	void ToneMap(vk::raii::CommandBuffer& cmdBuf);
 
-	///@brief Lays out and draws both panes plus the shared frequency ruler
+	///@brief Lays out and draws both panes plus whichever frequency rulers are enabled
 	void Render(ImVec2 size);
 
 	SpectrumArea* GetSpectrumArea()
@@ -65,6 +73,16 @@ public:
 
 	std::shared_ptr<PlotAxis> GetXAxis()
 	{ return m_xAxis; }
+
+	/**
+		@brief The annotation overlay, drawn over both areas
+
+		Owned here rather than by either area because it draws over both and needs the plot
+		rectangles they report, so putting it in one of them would mean the other's overlay
+		came from somewhere else. See notes/annotation-overlay-plan.md §A2.
+	 */
+	AnnotationOverlay& GetOverlay()
+	{ return m_overlay; }
 
 	///@brief Fraction of the height given to the spectrum, the rest to the waterfall
 	float GetSpectrumFraction() const
@@ -88,6 +106,9 @@ protected:
 
 	std::unique_ptr<SpectrumArea> m_spectrumArea;
 	std::unique_ptr<WaterfallArea> m_waterfallArea;
+
+	///@brief Drawn over both areas after each has rendered
+	AnnotationOverlay m_overlay;
 
 	float m_spectrumFraction;
 
