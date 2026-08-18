@@ -66,6 +66,9 @@ ComplexFFTFilter::ComplexFFTFilter(const string& color)
 	, m_blackmanHarrisComputePipeline("shaders/ComplexBlackmanHarrisWindow.spv", 3, sizeof(WindowFunctionArgs))
 	, m_rectangularComputePipeline("shaders/ComplexRectangularWindow.spv", 3, sizeof(WindowFunctionArgs))
 	, m_cosineSumComputePipeline("shaders/ComplexCosineSumWindow.spv", 3, sizeof(WindowFunctionArgs))
+	//ours; fused unpack + convert + window for packed input
+	, m_packedWindowComputePipeline(
+		"shaders/PackedComplexWindow.spv", 2, sizeof(PackedComplexWindowArgs))
 	//ours; see the shader source for why neither upstream postprocess shader fits
 	, m_postprocessComputePipeline(
 		"shaders/ComplexToLogMagnitudeShifted.spv", 2, sizeof(ComplexToLogMagnitudeShiftedArgs))
@@ -188,26 +191,44 @@ void ComplexFFTFilter::ReallocateBuffers(size_t npoints, size_t nouts, size_t nb
 
 void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<QueueHandle> queue)
 {
-	//Make sure we've got valid inputs
+	//Make sure we've got valid inputs.
+	//
+	//Two shapes are accepted on input 0; see the class comment. Packed is checked first
+	//because a PackedIQWaveform is not a UniformAnalogWaveform and the casts are disjoint,
+	//so the order only matters for which error message a bad input produces.
 	ClearMessages();
+	auto din_packed = dynamic_cast<PackedIQWaveform*>(GetInputWaveform(0));
 	auto din_i = dynamic_cast<UniformAnalogWaveform*>(GetInputWaveform(0));
 	auto din_q = dynamic_cast<UniformAnalogWaveform*>(GetInputWaveform(1));
 	auto din_center = GetInput(2);
-	if(!din_i || !din_q || !din_center)
+
+	//Whatever carries the timebase and the sample count, which is the packed buffer in
+	//packed mode and the I waveform in planar mode
+	WaveformBase* din_ref = din_packed
+		? static_cast<WaveformBase*>(din_packed)
+		: static_cast<WaveformBase*>(din_i);
+
+	//In packed mode the Q input is unused: both components come out of the same buffer
+	const bool needQ = !din_packed;
+
+	if(!din_ref || !din_center || (needQ && !din_q))
 	{
 		if(!GetInput(0))
 			AddErrorMessage("Missing inputs", "No I signal input connected");
 		else if(!GetInputWaveform(0))
 			AddErrorMessage("Missing inputs", "No waveform available at I input");
-		else if(!din_i)
-			AddErrorMessage("Invalid inputs", "Expect a uniform analog I input");
+		else if(!din_ref)
+			AddErrorMessage("Invalid inputs", "Expect a uniform analog or packed I/Q I input");
 
-		if(!GetInput(1))
-			AddErrorMessage("Missing inputs", "No Q signal input connected");
-		else if(!GetInputWaveform(1))
-			AddErrorMessage("Missing inputs", "No waveform available at Q input");
-		else if(!din_q)
-			AddErrorMessage("Invalid inputs", "Expect a uniform analog Q input");
+		if(needQ)
+		{
+			if(!GetInput(1))
+				AddErrorMessage("Missing inputs", "No Q signal input connected");
+			else if(!GetInputWaveform(1))
+				AddErrorMessage("Missing inputs", "No waveform available at Q input");
+			else if(!din_q)
+				AddErrorMessage("Invalid inputs", "Expect a uniform analog Q input");
+		}
 
 		if(!din_center)
 			AddErrorMessage("Missing inputs", "No center frequency control input connected");
@@ -220,7 +241,11 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 	//legacy sessions may have persisted a unit of Hz.
 	m_xAxisUnit = Unit(Unit::UNIT_MICROHZ);
 
-	const size_t inlen = min(din_i->size(), din_q->size());
+	//Complex samples available. size() on a packed waveform is words, not samples, which is
+	//why it is asked for m_complexSamples instead.
+	const size_t inlen = din_packed
+		? din_packed->m_complexSamples
+		: min(din_i->size(), din_q->size());
 	if(inlen < 2)
 	{
 		AddErrorMessage("Invalid inputs", "Need at least two input samples");
@@ -240,6 +265,20 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 
 	//A complex transform has as many output bins as input points; there is no conjugate
 	//symmetry to exploit.
+	//The packed window shader indexes transforms with the z dimension, which Vulkan only
+	//guarantees to 65535 workgroups. Reaching that needs a block of 65535 transforms, which
+	//at the shortest useful transform length is still hundreds of megasamples in one
+	//acquisition - but check rather than silently dropping the tail.
+	const size_t maxBatchDispatch = 65535;
+	if(din_packed && (nblocks > maxBatchDispatch))
+	{
+		AddErrorMessage("Invalid inputs",
+			"Block holds " + to_string(nblocks) + " transforms, more than the " +
+			to_string(maxBatchDispatch) + " one dispatch can cover");
+		SetData(nullptr, 0);
+		return;
+	}
+
 	const size_t nouts = npoints;
 	m_cachedNumOuts = nouts;
 	m_cachedNumBlocks = nblocks;
@@ -251,12 +290,12 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 
 	//Bin spacing is fs/N. Unlike the real FFT in FFTFilter there is no factor of two:
 	//the bins span the whole sample rate, not half of it.
-	const double fs_per_sample = din_i->m_timescale;
+	const double fs_per_sample = din_ref->m_timescale;
 	if(fs_per_sample <= 0)
 	{
 		AddErrorMessage("Invalid inputs", "Input timescale must be positive");
 		LogError("ComplexFFTFilter: input timescale is %" PRId64 " fs/sample, expected a "
-			"positive value\n", din_i->m_timescale);
+			"positive value\n", din_ref->m_timescale);
 		SetData(nullptr, 0);
 		return;
 	}
@@ -290,7 +329,7 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 	//One waveform holds every spectrum in the block, back to back. m_timescale and
 	//m_triggerPhase below describe the bins within one spectrum, not the whole buffer;
 	//see the class comment.
-	auto cap = SetupEmptyUniformAnalogOutputWaveform(din_i, 0);
+	auto cap = SetupEmptyUniformAnalogOutputWaveform(din_ref, 0);
 	cap->m_timescale = bin_uhz;
 	cap->Resize(nouts * nblocks);
 
@@ -384,6 +423,79 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 		const uint32_t window_block_count = GetComputeBlockCount(npoints, 64);
 
 		//Apply the window function, interleaving I and Q into m_rdinbuf as it goes
+		if(din_packed)
+		{
+			NamedDebugRange shaderRange(cmdBuf, "Unpack and window");
+
+			//Every window this filter offers is a cosine sum, so one shader covers all four
+			//and the coefficients are just push constants:
+			//    w = a0 - a1*cos(x) + a2*cos(2x) - a3*cos(3x)
+			//
+			//The Blackman-Harris coefficients here are the standard minimum-sidelobe set with
+			//the third term at cos(3x). scopeprotocols' ComplexBlackmanHarrisWindow.glsl:94
+			//(and BlackmanHarrisWindow.glsl:83) evaluate that term at cos(6x) instead, which
+			//leaves the coherent gain untouched - both cosines average to zero, so the 2.805
+			//amplitude correction stays correct - but breaks the four-term cancellation the
+			//window exists for. Measured over an 8192 point window, the shipped version peaks
+			//at -35.6 dB of sidelobe against -92.0 dB for the correct one. The planar path
+			//below still calls the upstream shader and so still has the old behaviour.
+			PackedComplexWindowArgs pargs;
+			pargs.npoints = npoints;
+			pargs.nsamples = inlen;
+			pargs.format = din_packed->m_format;
+			pargs.sampleBias = din_packed->m_bias;
+			pargs.sampleScale = din_packed->m_scale;
+			pargs.phaseStep = 2 * M_PI / npoints;
+			switch(window)
+			{
+				case FFTFilter::WINDOW_HANN:
+					pargs.alpha0 = 0.5;
+					pargs.alpha1 = 0.5;
+					pargs.alpha2 = 0;
+					pargs.alpha3 = 0;
+					break;
+
+				case FFTFilter::WINDOW_HAMMING:
+					pargs.alpha0 = 25.0f / 46;
+					pargs.alpha1 = 21.0f / 46;
+					pargs.alpha2 = 0;
+					pargs.alpha3 = 0;
+					break;
+
+				case FFTFilter::WINDOW_BLACKMAN_HARRIS:
+					pargs.alpha0 = 0.35875f;
+					pargs.alpha1 = 0.48829f;
+					pargs.alpha2 = 0.14128f;
+					pargs.alpha3 = 0.01168f;
+					break;
+
+				default:
+				case FFTFilter::WINDOW_RECTANGULAR:
+					pargs.alpha0 = 1;
+					pargs.alpha1 = 0;
+					pargs.alpha2 = 0;
+					pargs.alpha3 = 0;
+					break;
+			}
+
+			m_packedWindowComputePipeline.BindBufferNonblocking(0, din_packed->m_samples, cmdBuf);
+			m_packedWindowComputePipeline.BindBufferNonblocking(1, m_rdinbuf, cmdBuf, true);
+
+			//One dispatch for the whole batch, against one per transform below.
+			//
+			//The shader takes the within-transform index from x/y and the transform index
+			//from z, so the window coefficient no longer has to be derived from a flat global
+			//thread ID and no per-transform offset push is needed. At 1 Msample and 8192
+			//points that is 1 dispatch instead of 128.
+			m_packedWindowComputePipeline.Dispatch(cmdBuf, pargs,
+				min(window_block_count, 32768u),
+				window_block_count / 32768 + 1,
+				static_cast<uint32_t>(nblocks));
+
+			m_packedWindowComputePipeline.AddComputeMemoryBarrier(cmdBuf);
+			m_rdinbuf.MarkModifiedFromGpu();
+		}
+		else
 		{
 			NamedDebugRange shaderRange(cmdBuf, "Window function");
 

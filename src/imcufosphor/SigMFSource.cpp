@@ -149,6 +149,70 @@ bool SigMFSampleFormat::Parse(const string& str, string& errorOut)
 	return true;
 }
 
+bool SigMFSampleFormat::ToPackedFormat(PackedIQFormat& formatOut, float& biasOut, float& scaleOut) const
+{
+	//A real-valued recording has no Q to interleave with, so there is nothing for the complex
+	//unpack shader to do with it
+	if(!m_complex)
+		return false;
+
+	//The shader loads whole 32-bit words with the device's byte order, so the file's has to
+	//match the host's. Below 8 bits per component the question does not arise.
+	constexpr bool hostLittleEndian = (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__);
+	if( (m_bits > 8) && (m_littleEndian != hostLittleEndian) )
+		return false;
+
+	switch(m_kind)
+	{
+		case KIND_FLOAT:
+			//fp64 in a shader would need a feature bit for a format nothing in the demo
+			//dataset uses, and would halve throughput where it is supported
+			if(m_bits != 32)
+				return false;
+			formatOut = PACKED_IQ_FLOAT32;
+			biasOut = 0;
+			scaleOut = 1;
+			return true;
+
+		//Both integer kinds normalize to +/- 1.0 full scale, and the unsigned ones are offset
+		//binary with midscale at zero. Identical to what ConvertSamples() does, deliberately:
+		//a recording must read the same however it got to the GPU.
+		case KIND_SIGNED:
+		case KIND_UNSIGNED:
+		{
+			const bool isSigned = (m_kind == KIND_SIGNED);
+			switch(m_bits)
+			{
+				case 8:
+					formatOut = isSigned ? PACKED_IQ_INT8 : PACKED_IQ_UINT8;
+					biasOut = isSigned ? 0.0f : -128.0f;
+					scaleOut = 1.0f / 127.0f;
+					return true;
+
+				case 16:
+					formatOut = isSigned ? PACKED_IQ_INT16 : PACKED_IQ_UINT16;
+					biasOut = isSigned ? 0.0f : -32768.0f;
+					scaleOut = 1.0f / 32767.0f;
+					return true;
+
+				case 32:
+					formatOut = isSigned ? PACKED_IQ_INT32 : PACKED_IQ_UINT32;
+					biasOut = isSigned ? 0.0f : -2147483648.0f;
+					scaleOut = 1.0f / 2147483647.0f;
+					return true;
+
+				//64-bit would need shaderInt64 to extract and would lose precision on the
+				//way into a float anyway
+				default:
+					return false;
+			}
+		}
+
+		default:
+			return false;
+	}
+}
+
 string SigMFSampleFormat::ToString() const
 {
 	string ret = m_complex ? "complex " : "real ";
@@ -190,6 +254,13 @@ SigMFSource::SigMFSource(const string& metaPath, const string& dataPath)
 	, m_triggerOneShot(false)
 	, m_icap(nullptr)
 	, m_qcap(nullptr)
+	, m_packedCap(nullptr)
+	, m_usePackedPath(false)
+	, m_packedPathSupported(false)
+	, m_packedPathAllowed(true)
+	, m_packedFormat(PACKED_IQ_INT16)
+	, m_packedBias(0)
+	, m_packedScale(1.0f / 32767.0f)
 	, m_startTimestamp(0)
 	, m_startFemtoseconds(0)
 	, m_tRead(0)
@@ -428,6 +499,16 @@ void SigMFSource::LoadMetadata(const string& metaPath, const string& dataPath)
 
 	m_recordingName = BaseName(m_dataPath);
 	m_valid = true;
+
+	//Decide once, at open, whether this recording's bytes can go to the GPU as they are.
+	//AcquireData() branches on the answer for every block, and the two paths allocate
+	//different waveforms, so it must not change underneath them.
+	m_packedPathSupported = m_format.ToPackedFormat(m_packedFormat, m_packedBias, m_packedScale);
+	m_usePackedPath = m_packedPathSupported && m_packedPathAllowed;
+	LogTrace("Sample ingest path: %s\n",
+		m_usePackedPath
+			? "packed (file bytes to GPU unconverted)"
+			: "CPU conversion to planar float");
 
 	LogTrace("Opened SigMF recording %s: %s, %" PRId64 " samples at %g Hz, %zu captures, "
 		"%zu annotations, %s\n",
@@ -822,15 +903,56 @@ bool SigMFSource::AcquireData()
 	//memory stays flat no matter how large the recording is.
 	size_t bytesPerSample = m_format.BytesPerSample();
 	size_t readlen = nsamples * bytesPerSample;
-	if(m_readBuffer.size() < readlen)
-		m_readBuffer.resize(readlen);
+
+	//Decide where the bytes land before reading them.
+	//
+	//On the packed path that is the waveform's own pinned host memory, so the file data is
+	//written exactly once on the CPU: pread fills the same buffer the host-to-device transfer
+	//will read from. Both the staging vector and the conversion loop that used to sit between
+	//them are gone, and what crosses the bus is the file's own bytes - four per sample for
+	//ci16 rather than the eight two float arrays would need.
+	//
+	//On the CPU path the bytes cannot be a waveform until they are converted, so they land in
+	//the staging buffer exactly as before.
+	uint8_t* dst = nullptr;
+	if(m_usePackedPath)
+	{
+		//Allocated once and reused, for the same reason the float pair below is; see the
+		//comment there.
+		if(!m_packedCap)
+		{
+			m_packedCap = new PackedIQWaveform(m_nickname + ".RX.iq");
+			m_packedCap->m_format = m_packedFormat;
+			m_packedCap->m_bias = m_packedBias;
+			m_packedCap->m_scale = m_packedScale;
+		}
+		m_packedCap->ResizeComplexSamples(nsamples);
+
+		//Ignoring the GPU copy rather than PrepareForCpuAccess(): every byte is about to be
+		//overwritten, so faulting the previous block back from the device would be a
+		//full-size transfer whose result is discarded on the next line.
+		m_packedCap->m_samples.PrepareForCpuAccessIgnoringGpuData();
+
+		dst = reinterpret_cast<uint8_t*>(m_packedCap->m_samples.GetCpuPointer());
+		if(!dst)
+		{
+			LogError("SigMFSource: packed sample buffer has no host mapping\n");
+			return false;
+		}
+	}
+	else
+	{
+		if(m_readBuffer.size() < readlen)
+			m_readBuffer.resize(readlen);
+		dst = m_readBuffer.data();
+	}
 
 	off_t offset = m_dataStartByte + m_playCursor * static_cast<off_t>(bytesPerSample);
 	size_t got = 0;
 	double tReadStart = GetTime();
 	while(got < readlen)
 	{
-		ssize_t r = pread(m_fd, m_readBuffer.data() + got, readlen - got, offset + got);
+		ssize_t r = pread(m_fd, dst + got, readlen - got, offset + got);
 		if(r < 0)
 		{
 			if(errno == EINTR)
@@ -875,6 +997,46 @@ bool SigMFSource::AcquireData()
 	}
 
 	auto chan = dynamic_cast<ComplexChannel*>(GetChannel(0));
+	SequenceSet s;
+
+	//Packed path: the bytes are already where they need to be, so all that is left is to say
+	//how many of them are real and when they were captured.
+	//
+	//Only stream 0 is published. There is no Q waveform to publish - both components are in
+	//this one buffer, which is the entire point - and ComplexFFTFilter does not read input 1
+	//when input 0 is packed. Leaving stream 1 unset also means PopPendingWaveform() never
+	//calls SetData on it, so it stays null rather than holding something stale.
+	if(m_usePackedPath)
+	{
+		auto pcap = m_packedCap;
+		pcap->m_timescale = fs_per_sample;
+		pcap->m_triggerPhase = 0;
+		pcap->m_startTimestamp = startSec;
+		pcap->m_startFemtoseconds = startFs;
+		pcap->m_revision++;
+
+		//Shrink to what was actually read. resize() never reallocates downwards, so a short
+		//final block costs nothing and the sample count stays honest.
+		pcap->ResizeComplexSamples(goodSamples);
+		pcap->MarkSamplesModifiedFromCpu();
+
+		m_samplesDelivered += goodSamples;
+		m_samplesPlayed += goodSamples;
+
+		s[StreamDescriptor(chan, 0)] = pcap;
+
+		chan->UpdateCenterFrequency(GetExactCenterFrequency());
+		m_playCursor += goodSamples;
+
+		m_pendingWaveformsMutex.lock();
+		m_pendingWaveforms.push_back(s);
+		m_pendingWaveformsMutex.unlock();
+
+		if(m_triggerOneShot)
+			m_triggerArmed = false;
+
+		return true;
+	}
 
 	//Reuse the same two waveforms for every acquisition.
 	//
@@ -923,7 +1085,6 @@ bool SigMFSource::AcquireData()
 	icap->MarkSamplesModifiedFromCpu();
 	qcap->MarkSamplesModifiedFromCpu();
 
-	SequenceSet s;
 	s[StreamDescriptor(chan, 0)] = icap;
 	s[StreamDescriptor(chan, 1)] = qcap;
 

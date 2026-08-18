@@ -35,6 +35,7 @@ add_compute_shaders(
 	imcufosphorshaders
 	SOURCES
 		ComplexToLogMagnitudeShifted.glsl
+		PackedComplexWindow.glsl
 		SpectrumDensityAccumulate.glsl
 		SpectrumDensityFold.glsl
 		SpectrumDensityToneMap.glsl

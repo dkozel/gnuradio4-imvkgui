@@ -20,6 +20,7 @@
 #include "sigmf_helpers.h"
 
 #include "Annotation.h"
+#include "PackedIQWaveform.h"
 #include "RecordingClock.h"
 
 #include <string>
@@ -84,6 +85,22 @@ public:
 
 	///@brief Human readable description, for error messages
 	std::string ToString() const;
+
+	/**
+		@brief Maps this format onto a PackedIQFormat, if the GPU unpack shader can handle it
+
+		@param formatOut	Component layout for PackedComplexWindow.glsl
+		@param biasOut		Offset applied before scaling; nonzero only for offset binary
+		@param scaleOut		Raw LSB to volts
+
+		@return True if the format can take the packed path
+
+		False means the caller has to fall back to ConvertSamples() on the CPU. That happens
+		for the 64-bit formats, which would need shaderInt64 or fp64 in the shader for no
+		practical gain, and for a file whose byte order is not the host's, which would need a
+		second set of unpack paths for a case SigMF does not produce in practice.
+	 */
+	bool ToPackedFormat(PackedIQFormat& formatOut, float& biasOut, float& scaleOut) const;
 
 	bool m_complex;
 	Kind m_kind;
@@ -256,9 +273,43 @@ public:
 	double GetReadSeconds() const
 	{ return m_tRead; }
 
-	///@brief Seconds spent in ConvertSamples() since the last ResetIngestStats()
+	/**
+		@brief Seconds spent in ConvertSamples() since the last ResetIngestStats()
+
+		Always zero on the packed path: there is no CPU conversion to spend time in. Check
+		IsUsingPackedPath() before reading anything into a low number here.
+	 */
 	double GetConvertSeconds() const
 	{ return m_tConvert; }
+
+	/**
+		@brief True if samples reach the GPU in their on-disk format, unconverted
+
+		When set, the file bytes are read straight into pinned memory and a shader does the
+		unpacking, so neither ConvertSamples() nor the staging buffer is used and the bus
+		carries the file's own bytes rather than two float arrays.
+	 */
+	bool IsUsingPackedPath() const
+	{ return m_usePackedPath; }
+
+	/**
+		@brief Forces the CPU conversion path even when the format could be packed
+
+		Exists so the two ingest paths can be measured against each other on the same
+		recording and the same hardware, which is the only way to say what the packed path is
+		worth. Not a runtime setting: call it before the first AcquireData(), since the two
+		paths publish different waveforms on different streams and switching mid-playback
+		would leave a stale waveform on stream 1.
+	 */
+	void SetPackedPathAllowed(bool allow)
+	{
+		m_packedPathAllowed = allow;
+		m_usePackedPath = m_packedPathSupported && allow;
+	}
+
+	///@brief True if the recording's format could be packed, whatever SetPackedPathAllowed() says
+	bool IsPackedPathSupported() const
+	{ return m_packedPathSupported; }
 
 	///@brief Complex samples delivered since the last ResetIngestStats()
 	int64_t GetSamplesDelivered() const
@@ -424,14 +475,47 @@ protected:
 	///@brief True if the current arm is a single shot
 	bool m_triggerOneShot;
 
-	///@brief Scratch buffer for raw file data, reused between blocks
+	/**
+		@brief Scratch buffer for raw file data, reused between blocks
+
+		Only used on the CPU conversion path. The packed path reads straight into the
+		waveform's pinned host memory, so there is no staging copy to make.
+	 */
 	std::vector<uint8_t> m_readBuffer;
 
 	//The I and Q waveforms, allocated once and reused for every acquisition. Non-owning:
 	//the channel owns them, because it is the channel that will delete them. See
 	//AcquireData() for why they are reused and what that costs in in-flight blocks.
+	//
+	//Null on the packed path, where m_packedCap replaces both.
 	UniformAnalogWaveform* m_icap;
 	UniformAnalogWaveform* m_qcap;
+
+	/**
+		@brief Raw interleaved samples, when the format can go to the GPU unconverted
+
+		Null on the CPU conversion path. Reused between acquisitions and owned by the
+		channel, exactly like m_icap and m_qcap.
+	 */
+	PackedIQWaveform* m_packedCap;
+
+	///@brief True if this recording's format takes the packed path, i.e. supported and allowed
+	bool m_usePackedPath;
+
+	///@brief True if the format could be packed, regardless of whether it is allowed to be
+	bool m_packedPathSupported;
+
+	///@brief False if the caller has forced the CPU path for measurement
+	bool m_packedPathAllowed;
+
+	///@brief Component layout handed to the unpack shader. Meaningless unless m_usePackedPath.
+	PackedIQFormat m_packedFormat;
+
+	///@brief Offset applied to each raw component before scaling
+	float m_packedBias;
+
+	///@brief Raw LSB to volts
+	float m_packedScale;
 
 	///@brief Wall clock time of the recording start, whole seconds
 	time_t m_startTimestamp;

@@ -41,7 +41,42 @@
 #include "VulkanFFTPlan.h"
 #include "FFTFilter.h"
 
+#include "PackedIQWaveform.h"
+
 class QueueHandle;
+
+/**
+	@brief Push constants for PackedComplexWindow.glsl
+
+	All members are 4-byte scalars, so the std430 push constant block and this struct have
+	the same layout with no padding to reason about.
+ */
+struct PackedComplexWindowArgs
+{
+	///@brief Transform length, in complex samples
+	uint32_t npoints;
+
+	///@brief Complex samples present in the input buffer
+	uint32_t nsamples;
+
+	///@brief A PackedIQFormat
+	uint32_t format;
+
+	///@brief Added to each raw component before scaling
+	float sampleBias;
+
+	///@brief Multiplied into each biased component to reach volts
+	float sampleScale;
+
+	///@brief 2*pi/npoints
+	float phaseStep;
+
+	///@brief Cosine-sum window coefficients: w = a0 - a1*cos(x) + a2*cos(2x) - a3*cos(3x)
+	float alpha0;
+	float alpha1;
+	float alpha2;
+	float alpha3;
+};
 
 /**
 	@brief Push constants for ComplexToLogMagnitudeShifted.glsl
@@ -75,6 +110,21 @@ struct ComplexToLogMagnitudeShiftedArgs
 	The window functions are scopeprotocols' installed complex window shaders, used
 	unmodified. The postprocess is app-local: see ComplexToLogMagnitudeShifted.glsl for
 	why neither upstream postprocess shader fits.
+
+	@par Input modes
+
+	The I input accepts either of two things, chosen by what the source hands over:
+
+	  - A PackedIQWaveform, holding interleaved samples in their on-disk binary format. The Q
+	    input is then unused and may be left unconnected. One dispatch of
+	    PackedComplexWindow.glsl unpacks, converts, windows and interleaves the whole block.
+	    This is the fast path and the one SigMFSource uses for every format it can pack.
+	  - A pair of UniformAnalogWaveforms carrying planar float I and Q, windowed by
+	    scopeprotocols' shaders. This is the fallback for recordings whose format the packed
+	    shader does not handle, and what synthesized test signals use.
+
+	Both produce bit-comparable spectra for the same input, modulo the Blackman-Harris
+	difference noted in Refresh().
 
 	@par Frequency axis
 
@@ -207,6 +257,16 @@ protected:
 
 	///@brief scopeprotocols' ComplexCosineSumWindow.spv
 	ComputePipeline m_cosineSumComputePipeline;
+
+	/**
+		@brief Our fused unpack + convert + window, for packed input
+
+		Replaces all three pipelines above whenever the input arrives as a PackedIQWaveform,
+		which is every recording whose on-disk format the shader can unpack. The three above
+		remain for float I/Q input, which is what the synthesized test cases and any
+		non-packable recording produce.
+	 */
+	ComputePipeline m_packedWindowComputePipeline;
 
 	///@brief Our fftshift + dBm conversion
 	ComputePipeline m_postprocessComputePipeline;
