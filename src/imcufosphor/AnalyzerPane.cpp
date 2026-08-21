@@ -18,14 +18,16 @@ using namespace std;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
-AnalyzerPane::AnalyzerPane(PlayerSession* session, TextureManager* texmgr, const string& colorRamp)
-	: m_session(session)
+AnalyzerPane::AnalyzerPane(IAnalyzerSource* source, TextureManager* texmgr, const string& colorRamp)
+	: m_source(source)
+	, m_annotations(nullptr)
+	, m_clock(nullptr)
 	, m_xAxis(make_shared<PlotAxis>(Unit(Unit::UNIT_MICROHZ)))
 	, m_spectrumFraction(0.35f)
 	, m_fitted(false)
 {
-	m_spectrumArea = make_unique<SpectrumArea>(session->GetDensity(), texmgr, colorRamp);
-	m_waterfallArea = make_unique<WaterfallArea>(session->GetWaterfall(), texmgr, colorRamp);
+	m_spectrumArea = make_unique<SpectrumArea>(source->GetDensity(), texmgr, colorRamp);
+	m_waterfallArea = make_unique<WaterfallArea>(source->GetWaterfall(), texmgr, colorRamp);
 
 	//One axis, two areas. From here the two cannot disagree about what frequency is under a
 	//given column, because there is only one set of numbers.
@@ -37,11 +39,20 @@ AnalyzerPane::AnalyzerPane(PlayerSession* session, TextureManager* texmgr, const
 	m_spectrumArea->SetShowXAxis(true);
 	m_waterfallArea->SetShowXAxis(true);
 
-	//Only the waterfall needs the timebase; the spectrum's vertical axis is amplitude
-	m_waterfallArea->SetTimebase(
-		&session->GetRowHistory(),
-		&session->GetSource()->GetClock(),
-		session->GetSource()->GetRecordingSampleRate());
+	//Only the waterfall needs the timebase; the spectrum's vertical axis is amplitude. The
+	//clock is null until SetAnnotationSource() supplies one, which WaterfallArea already
+	//handles: it drops the wall-clock line from the hover readout and keeps the age axis,
+	//which is derived from the row history alone.
+	m_waterfallArea->SetTimebase(&source->GetRowHistory(), nullptr, source->GetSampleRate());
+}
+
+void AnalyzerPane::SetAnnotationSource(const AnnotationSet* annotations, const RecordingClock* clock)
+{
+	m_annotations = annotations;
+	m_clock = clock;
+
+	//Re-push the timebase now that there is a clock to put in it
+	m_waterfallArea->SetTimebase(&m_source->GetRowHistory(), clock, m_source->GetSampleRate());
 }
 
 AnalyzerPane::~AnalyzerPane()
@@ -176,27 +187,27 @@ void AnalyzerPane::Render(ImVec2 size)
 	//Annotations over both, once each area has reported the rectangle it actually drew into.
 	//After rather than before, so a box sits on top of the waveform it describes rather than
 	//under it; ImGui's draw list is ordered by submission.
-	if(m_overlay.GetEnabled())
+	//Nothing to draw without a recording behind the stream: a live flowgraph has no annotation
+	//set, and the overlay's whole job is placing intervals from one against the display.
+	if(m_overlay.GetEnabled() && (m_annotations != nullptr))
 	{
 		auto dl = ImGui::GetWindowDrawList();
-		auto source = m_session->GetSource();
-		const auto& annotations = source->GetAnnotations();
 
 		m_overlay.DrawOnSpectrum(
 			dl,
 			m_spectrumArea->GetPlotRect(),
 			*m_xAxis,
-			annotations,
-			m_session->GetCurrentBlock(),
-			source->GetRecordingSampleRate(),
-			m_session->GetDensity()->GetDecaySeconds());
+			*m_annotations,
+			m_source->GetCurrentBlock(),
+			m_source->GetSampleRate(),
+			m_source->GetDensity()->GetDecaySeconds());
 
 		m_overlay.DrawOnWaterfall(
 			dl,
 			m_waterfallArea->GetPlotRect(),
 			*m_xAxis,
-			annotations,
-			m_session->GetRowHistory());
+			*m_annotations,
+			m_source->GetRowHistory());
 	}
 
 	ImGui::SetCursorScreenPos(pos);

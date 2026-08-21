@@ -11,6 +11,7 @@
 #ifndef PlayerSession_h
 #define PlayerSession_h
 
+#include "AnalyzerSource.h"
 #include "SigMFSource.h"
 #include "ComplexFFTFilter.h"
 #include "SpectrumReducer.h"
@@ -20,53 +21,8 @@
 
 #include "../../lib/scopehal/scopeprotocols/Waterfall.h"
 
-/**
-	@brief Where playback time goes, accumulated since the last ResetStats()
-
-	Split this way because the three are fixed by different things and are fixed
-	differently: acquisition is host work bounded by the file and the sample converter,
-	recording is CPU time building command buffers and scales with the number of dispatches,
-	and submit is wall clock waiting on the GPU. Only the last is a GPU cost. Lumping them
-	together makes it impossible to tell an overhead-bound pipeline from a compute-bound one,
-	which is the entire question at hand.
- */
-struct PlaybackStats
-{
-	///@brief Seconds in AcquireData() and PopPendingWaveform()
-	double acquireSec = 0;
-
-	///@brief Seconds recording command buffers, i.e. in Filter::Refresh()
-	double recordSec = 0;
-
-	///@brief Seconds blocked in SubmitAndBlock()
-	double submitSec = 0;
-
-	///@brief Transforms executed
-	int64_t spectra = 0;
-
-	///@brief Calls to SubmitAndBlock()
-	int64_t submits = 0;
-};
-
-/**
-	@brief Sample range covered by one acquisition block, in both coordinate systems
-
-	Recording coordinates are what SigMF annotations and the wall clock speak; stream
-	coordinates are monotonic and are what elapsed durations must be measured in. See RowMark
-	for the full taxonomy and for why the ingest statistics counter is not either of them.
-
-	The recording range wraps: a block that straddles the end of the file during looped
-	playback has a recordingEnd below its recordingStart. Callers converting this to a time
-	or querying annotations over it have to handle that, which is precisely why the stream
-	range is here beside it.
- */
-struct BlockSpan
-{
-	int64_t streamStart = 0;
-	int64_t streamEnd = 0;
-	int64_t recordingStart = 0;
-	int64_t recordingEnd = 0;
-};
+//PlaybackStats and BlockSpan moved to AnalyzerSource.h, which SpectrumEngine shares. Included
+//above rather than forward declared, so every existing user of this header still sees them.
 
 /**
 	@brief Owns the recording, the filter graph, and playback
@@ -87,7 +43,7 @@ struct BlockSpan
 	the FFT runs GroupSize() times per waterfall row, so that RBW, line rate and playback
 	speed stay independent. See DESIGN.md sections 7.3 and 8.1.
  */
-class PlayerSession
+class PlayerSession : public IAnalyzerSource
 {
 public:
 	PlayerSession(SigMFSource* source, std::shared_ptr<QueueHandle> queue);
@@ -141,10 +97,13 @@ public:
 	SpectrumReducer* GetReducer()
 	{ return m_reducer; }
 
-	SpectrumDensity* GetDensity()
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// IAnalyzerSource
+
+	virtual SpectrumDensity* GetDensity() override
 	{ return m_density; }
 
-	Waterfall* GetWaterfall()
+	virtual Waterfall* GetWaterfall() override
 	{ return m_waterfall; }
 
 	/**
@@ -153,12 +112,18 @@ public:
 		Recorded here rather than in the display because this is where rows are produced.
 		Anything drawing a waterfall time axis needs it; see DESIGN.md section 8.2.
 	 */
-	RowHistory& GetRowHistory()
+	virtual RowHistory& GetRowHistory() override
 	{ return m_rowHistory; }
 
-	///@brief Number of waterfall rows produced since the last reset
-	int64_t GetRowsPlayed() const
-	{ return m_rowsPlayed; }
+	/**
+		@brief Sample rate of the recording being played
+
+		The recording's rate, not a playback rate: this is what the time axis and the density
+		map's persistence constants are derived from, and neither cares how fast the file is
+		being read.
+	 */
+	virtual double GetSampleRate() const override
+	{ return m_source->GetRecordingSampleRate(); }
 
 	/**
 		@brief Sample range of the most recently processed acquisition block
@@ -168,8 +133,12 @@ public:
 		against the play cursor, which has already moved on to the next block by the time the
 		frame is drawn.
 	 */
-	const BlockSpan& GetCurrentBlock() const
+	virtual const BlockSpan& GetCurrentBlock() const override
 	{ return m_currentBlock; }
+
+	///@brief Number of waterfall rows produced since the last reset
+	int64_t GetRowsPlayed() const
+	{ return m_rowsPlayed; }
 
 	///@brief Rewinds to the start of the recording and clears accumulated state
 	void Restart();

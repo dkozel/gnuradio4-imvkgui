@@ -11,9 +11,10 @@
 #ifndef AnalyzerPane_h
 #define AnalyzerPane_h
 
+#include "AnalyzerSource.h"
 #include "AnnotationOverlay.h"
-#include "PlayerSession.h"
 #include "PlotAxis.h"
+#include "RecordingClock.h"
 #include "SpectrumArea.h"
 #include "WaterfallArea.h"
 
@@ -48,8 +49,28 @@
 class AnalyzerPane
 {
 public:
-	AnalyzerPane(PlayerSession* session, TextureManager* texmgr, const std::string& colorRamp);
+	/**
+		@brief Builds both areas over a source of spectra
+
+		Takes the narrow IAnalyzerSource rather than a PlayerSession so that a live flowgraph
+		can drive the same display as a file being played back. Requires a source with both
+		parts: a single-pane display uses SpectrumArea or WaterfallArea directly instead of
+		asking this class to draw half of itself.
+	 */
+	AnalyzerPane(IAnalyzerSource* source, TextureManager* texmgr, const std::string& colorRamp);
 	virtual ~AnalyzerPane();
+
+	/**
+		@brief Supplies the two things only a recording has
+
+		Optional, and absent on a live flowgraph: a stream arriving from a port has no
+		annotations to draw and no wall clock to pin them to. Without this the overlay draws
+		nothing and the waterfall's hover readout omits the timestamp, both of which the areas
+		already handle by null check rather than by requiring a caller to disable them.
+
+		Neither pointer is owned; both must outlive the pane.
+	 */
+	void SetAnnotationSource(const AnnotationSet* annotations, const RecordingClock* clock);
 
 	//not copyable or assignable
 	AnalyzerPane(const AnalyzerPane&) =delete;
@@ -99,7 +120,13 @@ protected:
 	void HandleMouse(ImVec2 plotPos, ImVec2 plotSize);
 	void ClampXAxis(float widthPixels);
 
-	PlayerSession* m_session;
+	IAnalyzerSource* m_source;
+
+	///@brief Annotations to draw over both areas, or null on a live stream
+	const AnnotationSet* m_annotations;
+
+	///@brief Recording sample index to wall clock, or null on a live stream
+	const RecordingClock* m_clock;
 
 	///@brief The one frequency axis both areas point at
 	std::shared_ptr<PlotAxis> m_xAxis;

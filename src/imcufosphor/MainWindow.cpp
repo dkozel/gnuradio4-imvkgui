@@ -42,6 +42,10 @@ MainWindow::MainWindow(shared_ptr<QueueHandle> queue, SigMFSource* source)
 
 	m_pane = make_unique<AnalyzerPane>(m_session.get(), m_texmgr.get(), "eye-gradient-viridis");
 
+	//The two things only a recording has. A live flowgraph driving the same pane leaves these
+	//unset, which turns the overlay off and drops the wall clock from the hover readout.
+	m_pane->SetAnnotationSource(&source->GetAnnotations(), &source->GetClock());
+
 	//Our own command buffer, because the tone map dispatch cannot go inside the render pass
 	vk::CommandPoolCreateInfo poolInfo(
 		vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,

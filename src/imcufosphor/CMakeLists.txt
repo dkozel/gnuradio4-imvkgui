@@ -22,10 +22,12 @@ add_library(imcufosphor-core STATIC
 	Annotation.cpp
 	ComplexFFTFilter.cpp
 	GpuTimer.cpp
+	IqInjector.cpp
 	PlayerSession.cpp
 	RecordingClock.cpp
 	SigMFSource.cpp
 	SpectrumDensity.cpp
+	SpectrumEngine.cpp
 	SpectrumReducer.cpp
 	)
 
@@ -57,17 +59,48 @@ PUBLIC
 set_property(TARGET imcufosphor-core PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 ########################################################################
+# Display
+########################################################################
+
+# Everything that draws, and nothing that decides what to draw.
+#
+# Split out of the sigmf-spectrum executable so that a second host - the GNU Radio 4 blocks in
+# gr-imcufosphor - can render the same panes without linking main.cpp. The areas were always
+# independent of the application (they take a filter pointer, not a session), so this is a
+# target boundary drawn around code that was already separable, not a refactor of it.
+#
+# The files stay in this directory. Moving them would break every #include for no gain.
+add_library(imcufosphor-render STATIC
+	AnalyzerPane.cpp
+	AnnotationOverlay.cpp
+	PlotAxis.cpp
+	RenderHost.cpp
+	SpectrumArea.cpp
+	WaterfallArea.cpp
+	)
+
+target_include_directories(imcufosphor-render
+PUBLIC
+	${CMAKE_CURRENT_SOURCE_DIR}
+	)
+
+target_compile_options(imcufosphor-render PRIVATE ${IMCUFOSPHOR_WERROR_FLAGS})
+
+target_link_libraries(imcufosphor-render
+PUBLIC
+	imcufosphor-core
+	ngscopeclient-compat
+	)
+
+set_property(TARGET imcufosphor-render PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+########################################################################
 # Application
 ########################################################################
 
 add_executable(sigmf-spectrum
 	main.cpp
 	MainWindow.cpp
-	AnalyzerPane.cpp
-	AnnotationOverlay.cpp
-	PlotAxis.cpp
-	SpectrumArea.cpp
-	WaterfallArea.cpp
 
 	# Lifted display primitives go here as they are brought in, e.g.
 	#   ${SCOPEHAL_APPS_DIR}/src/ngscopeclient/VulkanWindow.cpp
@@ -78,8 +111,7 @@ add_executable(sigmf-spectrum
 target_compile_options(sigmf-spectrum PRIVATE ${IMCUFOSPHOR_WERROR_FLAGS})
 
 target_link_libraries(sigmf-spectrum
-	imcufosphor-core
-	ngscopeclient-compat
+	imcufosphor-render
 	)
 
 imcufosphor_attach_shaders(sigmf-spectrum "${IMCUFOSPHOR_APP_SPV_DIR}")
