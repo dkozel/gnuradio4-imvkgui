@@ -1,0 +1,19 @@
+# GNU Radio 4 out-of-tree module manifest.
+#
+# Laid out the way gr4_modtool generates a module so that the standard tooling recognises it,
+# even though this one is normally built as a subdirectory of the imcufosphor superbuild rather
+# than standalone. See cmake/Dependencies.cmake for how the two modes differ.
+
+[project]
+name = "gr_imcufosphor"
+version = "0.1.0"
+cpp_namespace = "gr::imcufosphor"
+cmake_prefix = "gr_imcufosphor"
+gr4_include_prefix = "gnuradio-4.0"
+
+[build]
+cmake = true
+meson = false
+
+[groups]
+display = "blocks/display"

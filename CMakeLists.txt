@@ -46,7 +46,7 @@ set(DISABLE_PCH CACHE BOOL "Disable precompiled headers")
 #   ln -sf build/compile_commands.json compile_commands.json
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -274,6 +274,22 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/src/imcufosphor")
 # repro cases under tools/vkmintest and tools/vkbisect stay hand-built from the g++ line in
 # their header comments, since their whole point is to have no dependency on this project.
 add_subdirectory("${PROJECT_SOURCE_DIR}/tools")
+
+########################################################################
+# GNU Radio 4 blocks
+########################################################################
+
+option(BUILD_GR4_BLOCKS "Build the GNU Radio 4 display blocks" OFF)
+
+if(BUILD_GR4_BLOCKS)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(GNURADIO4 REQUIRED IMPORTED_TARGET gnuradio4)
+
+	include(CTest)
+	enable_testing()
+
+	add_subdirectory("${PROJECT_SOURCE_DIR}/gr-imcufosphor")
+endif()
 
 # Make sure all of the scopehal shared libraries are built relocatable
 set_property(TARGET scopehal PROPERTY POSITION_INDEPENDENT_CODE ON)

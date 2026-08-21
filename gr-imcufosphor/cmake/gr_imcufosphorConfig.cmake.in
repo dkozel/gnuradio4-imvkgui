@@ -1,0 +1,18 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Recreated under the same imported-target name the exported targets were built against, so the
+# link interface resolves in a consumer's build.
+find_dependency(PkgConfig)
+if(NOT TARGET PkgConfig::GR_IMCU_GR4)
+	pkg_check_modules(GR_IMCU_GR4 REQUIRED IMPORTED_TARGET gnuradio4)
+endif()
+
+# The blocks include AnalyzerPane.h and SpectrumEngine.h directly, so the display libraries have
+# to be resolvable too. Only meaningful once imcufosphor exports an installed package.
+find_dependency(imcufosphor)
+
+include("${CMAKE_CURRENT_LIST_DIR}/gr_imcufosphorTargets.cmake")
+
+check_required_components(gr_imcufosphor)
