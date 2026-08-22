@@ -33,7 +33,7 @@ static unique_ptr<vk::raii::CommandBuffer> g_cmdBuf;
 
 static void MakeCmdBuf()
 {
-	g_queue = g_vkQueueManager->GetComputeQueue("bisect");
+	g_queue = g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "bisect");
 	vk::CommandPoolCreateInfo poolInfo(
 		vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 		g_queue->GetQueue()->m_family);

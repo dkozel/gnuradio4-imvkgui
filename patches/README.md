@@ -18,7 +18,7 @@ Each patch here must:
 
 ### `scopehal/0001-AcceleratorBuffer-work-around-NVIDIA-Xid-32-on-trans.patch`
 
-Branch `imcufosphor/xid32-workaround` in `lib/scopehal`, on top of `24dd95fb` (v0.2.1).
+Branch `imcufosphor/xid32-workaround` in `lib/scopehal`, on top of `0c6b2f41` (v0.2.2).
 
 Works around an NVIDIA driver defect that makes **every** scopehal GPU transfer fault the
 device with `NVRM: Xid 32` / `VK_ERROR_DEVICE_LOST`. Without it, no GPU work is possible on
@@ -28,6 +28,12 @@ this workstation at all. See `DESIGN.md` §3 (R7) for the full analysis and
 **Status:** local only. Not yet submitted upstream — the intent is to raise it with the
 scopehal maintainers once the phase 1 results are in, at which point they may prefer the
 `vkCmdSetEvent2` route or identify a different underlying cause.
+
+**This procedure has already failed once.** The v0.2.1 → v0.2.2 bump left the branch behind
+on `24dd95fb` and nothing noticed: `master` was checked out, the patch was not in the tree, and
+`--verify` faulted with `VK_ERROR_DEVICE_LOST` until it was re-applied here. A re-apply step that
+depends on someone remembering is not a mechanism. Treat this as the argument for folding the
+change into a vendored copy rather than carrying it as a patch.
 
 **On submodule bump:** re-apply this branch onto the new upstream commit and re-export.
 Verify with `./build/tools/wfbench/wfbench --file FILE.sigmf-meta --verify` on the default device — if it reports

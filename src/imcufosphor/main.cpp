@@ -67,7 +67,8 @@ static bool RunGui(const string& path)
 		hz.PrettyPrint(source.GetExactCenterFrequency()).c_str(),
 		source.GetTotalSamples());
 
-	shared_ptr<QueueHandle> queue(g_vkQueueManager->GetRenderQueue("MainWindow.render"));
+	shared_ptr<QueueHandle> queue(
+		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_RENDER, "MainWindow.render"));
 	MainWindow window(queue, &source);
 	window.GetSession()->SetFFTLength(g_defaultFFTLength);
 	window.GetSession()->SetBlockSize(g_defaultBlockSize);

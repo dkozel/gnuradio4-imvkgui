@@ -1,4 +1,4 @@
-From 69598d796b417c61f50280868b09f5fb30c364ca Mon Sep 17 00:00:00 2001
+From 936773a03a0d7d6b00709251c7804c9bba38a539 Mon Sep 17 00:00:00 2001
 From: Derek Kozel <dkozel@deepsig.ai>
 Date: Sun, 16 Aug 2026 12:42:51 +0100
 Subject: [PATCH] AcceleratorBuffer: work around NVIDIA Xid 32 on transfer

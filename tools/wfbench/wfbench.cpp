@@ -66,6 +66,9 @@ struct BenchConfig
 	int64_t warmupSamples = 4 * 1024 * 1024;
 
 	bool warmCache = false;
+
+	///@brief Force the CPU conversion path even where the recording could be packed
+	bool forcePlanar = false;
 	bool gpuTiming = true;
 	bool verify = false;
 
@@ -204,6 +207,7 @@ static bool WriteJson(const string& path, const BenchConfig& cfg, PlayerSession&
 	fprintf(fp, "  \"block_size\": %" PRIu64 ",\n", source->GetSampleDepth());
 	fprintf(fp, "  \"spectra_per_row\": %" PRId64 ",\n", session.GetGroupSize());
 	fprintf(fp, "  \"warm_cache\": %s,\n", cfg.warmCache ? "true" : "false");
+	fprintf(fp, "  \"packed_ingest\": %s,\n", source->IsUsingPackedPath() ? "true" : "false");
 	fprintf(fp, "  \"wall_sec\": %.6f,\n", wallSec);
 	fprintf(fp, "  \"samples\": %" PRId64 ",\n", samples);
 	fprintf(fp, "  \"megasamples_per_sec\": %.3f,\n", samples / wallSec / 1e6);
@@ -312,6 +316,7 @@ static void Usage()
 	printf("  --duration S           seconds to run if --samples is not given, default 5\n");
 	printf("  --warmup N             samples to process before zeroing counters, default 4M\n");
 	printf("  --warm-cache           read the whole recording first, so the run hits page cache\n");
+	printf("  --planar               force the CPU convert path, for A/B against the packed one\n");
 	printf("  --no-gpu-timing        skip timestamp queries (they add a stall per submit)\n");
 	printf("  --verify               run every correctness check on this recording, then exit\n");
 	printf("  --expect-tone HZ       additionally check the source decodes a tone at HZ\n");
@@ -396,6 +401,8 @@ static int ParseArguments(int argc, char* argv[], BenchConfig& cfg)
 			cfg.duration = atof(next("--duration"));
 		else if(s == "--warm-cache")
 			cfg.warmCache = true;
+		else if(s == "--planar")
+			cfg.forcePlanar = true;
 		else if(s == "--no-gpu-timing")
 			cfg.gpuTiming = false;
 		else if(s == "--fold-interval")
@@ -500,6 +507,11 @@ static int Run(BenchConfig& cfg)
 	if(cfg.blockSize == 0)
 		cfg.blockSize = cfg.fftLength;
 
+	//Applied before anything reports on it, and before the first AcquireData(), since the two
+	//ingest paths publish different waveforms
+	if(cfg.forcePlanar)
+		source.SetPackedPathAllowed(false);
+
 	Unit hz(Unit::UNIT_HZ);
 	LogNotice("wfbench\n");
 	{
@@ -511,6 +523,12 @@ static int Run(BenchConfig& cfg)
 		LogNotice("unified memory    %s\n", g_vulkanDeviceHasUnifiedMemory ? "yes" : "no");
 		LogNotice("recording         %s\n", source.GetName().c_str());
 		LogNotice("format            %s\n", source.GetSampleFormat().ToString().c_str());
+		LogNotice("ingest path       %s\n",
+			source.IsUsingPackedPath()
+				? "packed (file bytes to GPU unconverted)"
+				: (source.IsPackedPathSupported()
+					? "planar float (packed path available, forced off)"
+					: "planar float (format cannot be packed)"));
 		LogNotice("sample rate       %s\n", hz.PrettyPrint(source.GetRecordingSampleRate()).c_str());
 		LogNotice("total samples     %" PRId64 "\n", source.GetTotalSamples());
 		LogNotice("transform length  %" PRId64 "\n", cfg.fftLength);
@@ -522,7 +540,8 @@ static int Run(BenchConfig& cfg)
 	if(cfg.warmCache)
 		WarmCache(source.GetDataPath());
 
-	shared_ptr<QueueHandle> queue(g_vkQueueManager->GetComputeQueue("wfbench.compute"));
+	shared_ptr<QueueHandle> queue(
+		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "wfbench.compute"));
 	PlayerSession session(&source, queue);
 	session.SetFFTLength(cfg.fftLength);
 	session.SetBlockSize(cfg.blockSize);
@@ -550,9 +569,21 @@ static int Run(BenchConfig& cfg)
 		}
 		LogNotice("ComplexFFTFilter verification %s\n", fftOk ? "PASSED" : "FAILED");
 
-		bool vok = fftOk;
+		LogNotice("\nPacked I/Q datapath verification\n");
+		bool packedOk;
+		{
+			LogIndenter li;
+			packedOk = VerifyPackedIQPath();
+		}
+		LogNotice("Packed I/Q datapath verification %s\n", packedOk ? "PASSED" : "FAILED");
+
+		bool vok = fftOk && packedOk;
 		vok = VerifyBatchedFFT(session, cfg.fftLength) && vok;
 		vok = VerifySpectrumDensity(session, cfg.fftLength, cfg.blockSize) && vok;
+
+		//Drives the same filters as everything above, but from a raw IQ span rather than from
+		//a recording, which is the path the GNU Radio blocks take
+		vok = VerifySpectrumEngine() && vok;
 
 		//Only meaningful on a recording documented to contain one tone
 		if(cfg.expectTone > 0)

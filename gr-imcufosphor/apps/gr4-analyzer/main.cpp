@@ -272,7 +272,8 @@ int main(int argc, char* argv[])
 	//Scoped so that everything holding a Vulkan object is destroyed before
 	//ScopehalStaticCleanup(). DESIGN.md section 17 records the teardown fault this prevents.
 	{
-		auto queue = g_vkQueueManager->GetRenderQueue("gr4-analyzer.render");
+		auto queue = g_vkQueueManager->GetQueueFromPool(
+			QueueManager::QUEUE_POOL_RENDER, "gr4-analyzer.render");
 		Gr4AnalyzerWindow window(queue);
 
 		//Published before the graph is built, so that a block's first draw() finds it. Nothing

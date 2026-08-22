@@ -96,7 +96,8 @@ static bool RunWindowSmokeTest()
 		return false;
 	}
 
-	auto queue = g_vkQueueManager->GetRenderQueue("ngscopeclient-compat-linkcheck.render");
+	auto queue = g_vkQueueManager->GetQueueFromPool(
+		QueueManager::QUEUE_POOL_RENDER, "ngscopeclient-compat-linkcheck.render");
 
 	TextureManager textures(queue);
 	LinkCheckWindow window(queue);

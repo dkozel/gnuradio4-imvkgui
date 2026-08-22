@@ -65,7 +65,7 @@ int main(int argc, char** argv)
 	VkDevice dev = **g_vkComputeDevice;
 	VkPhysicalDevice phy = *(*g_vkComputePhysicalDevice);
 
-	auto q = g_vkQueueManager->GetComputeQueue("stage4");
+	auto q = g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "stage4");
 	uint32_t qfi = q->GetQueue()->m_family;
 	VkQueue queue = **(q->GetQueue()->GetQueue());
 	printf("using scopehal device %p, queue family %u\n", (void*)dev, qfi);

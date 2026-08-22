@@ -17,8 +17,10 @@
 #include "Verify.h"
 
 #include "ComplexFFTFilter.h"
+#include "PackedIQWaveform.h"
 #include "SigMFSource.h"
 #include "SpectrumDensity.h"
+#include "SpectrumEngine.h"
 #include "SpectrumReducer.h"
 
 #include "sigmf_core_generated.h"
@@ -187,7 +189,8 @@ bool VerifyComplexFFTFilter()
 	filt->SetWindowFunction(FFTFilter::WINDOW_RECTANGULAR);
 
 	//Compute queue and command buffer, as FilterGraphExecutor.cpp:547-554 sets up
-	shared_ptr<QueueHandle> queue(g_vkQueueManager->GetComputeQueue("ComplexFFTFilterTest"));
+	shared_ptr<QueueHandle> queue(
+		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "ComplexFFTFilterTest"));
 	vk::CommandPoolCreateInfo poolInfo(
 		vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 		queue->GetQueue()->m_family);
@@ -251,6 +254,388 @@ bool VerifyComplexFFTFilter()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Packed I/Q datapath verification
+//
+// The packed path replaces a CPU deinterleave and convert with a shader that unpacks the
+// file's own bytes, so the question it has to answer is not "does a tone land in the right
+// bin" - the planar checks above already cover the FFT itself - but "does interpreting the
+// same samples as packed words give the same answer as interpreting them as floats". Both
+// halves of that are synthesized here so the check needs no recording.
+
+/**
+	@brief Fills a PackedIQWaveform with a complex exponential quantized to ci16
+
+	@param wfm			Waveform to fill, resized here
+	@param fs			Sample rate, Hz
+	@param foffHz		Tone offset from center, Hz
+	@param nsamples		Complex samples to generate
+	@param dequantized	If non-null, filled with the float values those words decode to
+ */
+static void SynthesizePackedTone(
+	PackedIQWaveform* wfm,
+	double fs,
+	double foffHz,
+	size_t nsamples,
+	vector<float>* dequantized = nullptr)
+{
+	wfm->m_format = PACKED_IQ_INT16;
+	wfm->m_bias = 0;
+	wfm->m_scale = 1.0f / 32767.0f;
+	wfm->ResizeComplexSamples(nsamples);
+	wfm->PrepareForCpuAccess();
+
+	if(dequantized)
+		dequantized->resize(nsamples * 2);
+
+	double dphi = 2 * M_PI * foffHz / fs;
+	for(size_t i=0; i<nsamples; i++)
+	{
+		//Round rather than truncate, so the quantization error is symmetric and the two
+		//paths are comparing the same numbers rather than differing by half an LSB
+		int32_t qi = lround(cos(dphi * i) * 32767.0);
+		int32_t qq = lround(sin(dphi * i) * 32767.0);
+
+		//One word per complex sample: I in the low half, Q in the high half. This is the
+		//ci16_le layout verbatim, which is the whole point - nothing rearranges it.
+		wfm->m_samples[i] =
+			(static_cast<uint32_t>(qi) & 0xffff) |
+			(static_cast<uint32_t>(qq) << 16);
+
+		if(dequantized)
+		{
+			(*dequantized)[i*2 + 0] = qi / 32767.0f;
+			(*dequantized)[i*2 + 1] = qq / 32767.0f;
+		}
+	}
+	wfm->MarkModifiedFromCpu();
+}
+
+/**
+	@brief Runs one FFT over packed input and reports the strongest bin of a chosen spectrum
+
+	@param filt			Filter under test
+	@param chan			Channel supplying the packed input and the center frequency
+	@param fs			Sample rate, Hz
+	@param centerHz		Center frequency
+	@param foffHz		Tone offset from center
+	@param npoints		Transform length
+	@param nblocks		Transforms in the block
+	@param whichBlock	Which of them to report on
+	@param dequantized	If non-null, filled with the floats the packed words decode to
+	@param spectrumOut	If non-null, filled with every output bin
+ */
+static ComplexFFTResult RunPackedFFTCase(
+	ComplexFFTFilter* filt,
+	ComplexChannel* chan,
+	double fs,
+	double centerHz,
+	double foffHz,
+	size_t npoints,
+	size_t nblocks,
+	size_t whichBlock,
+	vk::raii::CommandBuffer& cmdBuf,
+	shared_ptr<QueueHandle> queue,
+	vector<float>* dequantized = nullptr,
+	vector<float>* spectrumOut = nullptr)
+{
+	ComplexFFTResult ret;
+	ret.peakBin = 0;
+	ret.peakDbm = -INFINITY;
+	ret.peakHz = 0;
+	ret.nouts = 0;
+
+	auto wfm = new PackedIQWaveform;
+	wfm->m_timescale = round(1e15 / fs);
+	wfm->m_triggerPhase = 0;
+	wfm->m_startTimestamp = 0;
+	wfm->m_startFemtoseconds = 0;
+	SynthesizePackedTone(wfm, fs, foffHz, npoints * nblocks, dequantized);
+
+	//Stream 1 deliberately left empty: a packed input carries both components, and the
+	//filter must not need a Q waveform to run
+	chan->SetData(wfm, 0);
+	chan->SetData(nullptr, 1);
+	chan->UpdateCenterFrequency(centerHz);
+
+	filt->SetFFTLength(npoints);
+
+	cmdBuf.begin({});
+	filt->Refresh(cmdBuf, queue);
+	cmdBuf.end();
+	queue->SubmitAndBlock(cmdBuf);
+
+	auto cap = dynamic_cast<UniformAnalogWaveform*>(filt->GetData(0));
+	if(!cap)
+	{
+		LogError("ComplexFFTFilter produced no output from packed input\n");
+		return ret;
+	}
+	cap->PrepareForCpuAccess();
+
+	//The output holds every spectrum in the block back to back, so index into the one asked
+	//for rather than scanning the whole buffer
+	ret.nouts = npoints;
+	size_t base = whichBlock * npoints;
+	if(cap->size() < base + npoints)
+	{
+		LogError("ComplexFFTFilter returned %zu bins, expected at least %zu\n",
+			cap->size(), base + npoints);
+		ret.nouts = 0;
+		return ret;
+	}
+
+	//Element by element rather than assign() over a range: AcceleratorBuffer's iterator does
+	//not support the pointer arithmetic a ranged assign needs
+	if(spectrumOut)
+	{
+		spectrumOut->resize(npoints);
+		for(size_t i=0; i<npoints; i++)
+			(*spectrumOut)[i] = cap->m_samples[base + i];
+	}
+
+	for(size_t i=0; i<npoints; i++)
+	{
+		if(cap->m_samples[base + i] > ret.peakDbm)
+		{
+			ret.peakDbm = cap->m_samples[base + i];
+			ret.peakBin = i;
+		}
+	}
+
+	ret.peakHz = (cap->m_triggerPhase + (int64_t)ret.peakBin * cap->m_timescale) / 1e6;
+	return ret;
+}
+
+/**
+	@brief Runs one FFT over planar float input and returns the whole spectrum
+
+	Separate from RunComplexFFTCase() because that one synthesizes its own signal; this takes
+	the samples it is given, so the packed and planar paths can be fed bit-identical data.
+ */
+static bool RunPlanarFFTFromSamples(
+	ComplexFFTFilter* filt,
+	ComplexChannel* chan,
+	double fs,
+	double centerHz,
+	const vector<float>& interleaved,
+	vk::raii::CommandBuffer& cmdBuf,
+	shared_ptr<QueueHandle> queue,
+	vector<float>& spectrumOut)
+{
+	size_t nsamples = interleaved.size() / 2;
+
+	auto wi = new UniformAnalogWaveform;
+	auto wq = new UniformAnalogWaveform;
+	for(auto w : {wi, wq})
+	{
+		w->m_timescale = round(1e15 / fs);
+		w->m_triggerPhase = 0;
+		w->m_startTimestamp = 0;
+		w->m_startFemtoseconds = 0;
+		w->Resize(nsamples);
+		w->PrepareForCpuAccess();
+	}
+	for(size_t i=0; i<nsamples; i++)
+	{
+		wi->m_samples[i] = interleaved[i*2 + 0];
+		wq->m_samples[i] = interleaved[i*2 + 1];
+	}
+	wi->MarkModifiedFromCpu();
+	wq->MarkModifiedFromCpu();
+
+	chan->SetData(wi, 0);
+	chan->SetData(wq, 1);
+	chan->UpdateCenterFrequency(centerHz);
+
+	cmdBuf.begin({});
+	filt->Refresh(cmdBuf, queue);
+	cmdBuf.end();
+	queue->SubmitAndBlock(cmdBuf);
+
+	auto cap = dynamic_cast<UniformAnalogWaveform*>(filt->GetData(0));
+	if(!cap)
+	{
+		LogError("ComplexFFTFilter produced no output from planar input\n");
+		return false;
+	}
+	cap->PrepareForCpuAccess();
+	spectrumOut.resize(cap->size());
+	for(size_t i=0; i<cap->size(); i++)
+		spectrumOut[i] = cap->m_samples[i];
+	return true;
+}
+
+bool VerifyPackedIQPath()
+{
+	const size_t npoints = 4096;
+	const double fs = 10e6;
+	const double centerHz = 1e9;
+	const double binHz = fs / npoints;
+	const double foffHz[] = { +512 * binHz, -512 * binHz, +1 * binHz, -1 * binHz };
+
+	//A unit amplitude tone quantized to int16 is still a unit amplitude tone to within half
+	//an LSB, so the same +10 dBm the planar checks expect
+	const float expectedDbm = 10.0f;
+
+	unique_ptr<ComplexChannel> chan(new ComplexChannel(
+		nullptr, "RX", "#4040ff", Unit(Unit::UNIT_FS), Unit(Unit::UNIT_VOLTS), 0));
+
+	auto filt = dynamic_cast<ComplexFFTFilter*>(Filter::CreateFilter("Complex FFT", "#ffffff"));
+	if(!filt)
+	{
+		LogError("Failed to create a Complex FFT filter\n");
+		return false;
+	}
+	filt->AddRef();
+	filt->SetInput("I", StreamDescriptor(chan.get(), 0));
+	filt->SetInput("Q", StreamDescriptor(chan.get(), 1));
+	filt->SetInput("center", StreamDescriptor(chan.get(), 2));
+	filt->SetWindowFunction(FFTFilter::WINDOW_RECTANGULAR);
+
+	shared_ptr<QueueHandle> queue(
+		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "PackedIQPathTest"));
+	vk::CommandPoolCreateInfo poolInfo(
+		vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+		queue->GetQueue()->m_family);
+	vk::raii::CommandPool pool(*g_vkComputeDevice, poolInfo);
+	vk::CommandBufferAllocateInfo bufinfo(*pool, vk::CommandBufferLevel::ePrimary, 1);
+	vk::raii::CommandBuffer cmdBuf(std::move(vk::raii::CommandBuffers(*g_vkComputeDevice, bufinfo).front()));
+
+	bool ok = true;
+	Unit hz(Unit::UNIT_HZ);
+
+	//1. The tone lands where the planar path puts it, for both signs of offset
+	for(auto foff : foffHz)
+	{
+		auto res = RunPackedFFTCase(
+			filt, chan.get(), fs, centerHz, foff, npoints, 1, 0, cmdBuf, queue);
+
+		size_t expectedBin = npoints/2 + (ssize_t)llround(foff * npoints / fs);
+		bool binOk = (res.nouts == npoints) && (res.peakBin == expectedBin);
+		bool ampOk = fabs(res.peakDbm - expectedDbm) < 0.01;
+		bool freqOk = fabs(res.peakHz - (centerHz + foff)) < binHz/2;
+
+		LogNotice("packed f_off %14s: peak bin %5zu (expected %5zu) %s, %7.3f dBm %s, %s %s\n",
+			hz.PrettyPrint(foff).c_str(),
+			res.peakBin, expectedBin, binOk ? "ok" : "FAIL",
+			res.peakDbm, ampOk ? "ok" : "FAIL",
+			hz.PrettyPrint(res.peakHz).c_str(), freqOk ? "ok" : "FAIL");
+
+		ok = ok && binOk && ampOk && freqOk;
+	}
+
+	//2. Every transform in a multi-transform block is windowed and placed correctly.
+	//
+	//This is what covers the batched dispatch. The predecessor needed one dispatch per
+	//transform because its window coefficient came from a flat thread index; the packed
+	//shader takes the transform index from the z dimension instead, so a mistake there shows
+	//up as the second and later spectra being windowed with the wrong coefficients.
+	{
+		const size_t nblocks = 4;
+		const double foff = -512 * binHz;
+		size_t expectedBin = npoints/2 - 512;
+		for(size_t b=0; b<nblocks; b++)
+		{
+			auto res = RunPackedFFTCase(
+				filt, chan.get(), fs, centerHz, foff, npoints, nblocks, b, cmdBuf, queue);
+
+			bool binOk = (res.peakBin == expectedBin);
+			bool ampOk = fabs(res.peakDbm - expectedDbm) < 0.01;
+
+			LogNotice("packed batch %zu/%zu     : peak bin %5zu (expected %5zu) %s, %7.3f dBm %s\n",
+				b + 1, nblocks, res.peakBin, expectedBin, binOk ? "ok" : "FAIL",
+				res.peakDbm, ampOk ? "ok" : "FAIL");
+
+			ok = ok && binOk && ampOk;
+		}
+	}
+
+	//3. Packed and planar agree bin for bin on identical samples.
+	//
+	//Blackman-Harris is deliberately excluded: the packed shader evaluates its fourth term at
+	//cos(3x) and scopeprotocols' ComplexBlackmanHarrisWindow.glsl:94 evaluates it at cos(6x),
+	//so the two windows are genuinely different shapes. See ComplexFFTFilter::Refresh().
+	struct { FFTFilter::WindowFunction w; const char* name; } windows[] =
+	{
+		{ FFTFilter::WINDOW_RECTANGULAR,	"Rectangular" },
+		{ FFTFilter::WINDOW_HAMMING,		"Hamming" },
+		{ FFTFilter::WINDOW_HANN,			"Hann" }
+	};
+	//A half-bin offset rather than an exact one. On an exact bin the window transform is
+	//sampled at its own nulls, so every bin but the tone's is numerical noise and there is
+	//nothing meaningful to compare; offsetting by half a bin spreads real, checkable leakage
+	//across the whole spectrum.
+	const double compareFoff = -512.5 * binHz;
+
+	//How far below the peak a bin has to be before its value stops meaning anything.
+	//
+	//The two paths do the same arithmetic in a different order - planar computes
+	//w*(raw*scale) on the CPU and then windows, packed computes (w*scale)*raw in the shader -
+	//so their inputs differ by an ulp or so of float32. An N point FFT turns that into
+	//roughly sqrt(N)*eps of magnitude error, which is about -108 dBc at 4096 points. Below
+	//that a bin is comparing two different roundings of zero, where a dB difference is
+	//meaningless however large it looks.
+	const float dynamicRangeDb = 100;
+
+	for(auto& wf : windows)
+	{
+		filt->SetWindowFunction(wf.w);
+
+		vector<float> dequantized;
+		vector<float> packedSpectrum;
+		vector<float> planarSpectrum;
+
+		RunPackedFFTCase(filt, chan.get(), fs, centerHz, compareFoff, npoints, 1, 0,
+			cmdBuf, queue, &dequantized, &packedSpectrum);
+		bool ran = RunPlanarFFTFromSamples(
+			filt, chan.get(), fs, centerHz, dequantized, cmdBuf, queue, planarSpectrum);
+
+		bool sizeOk = ran && (packedSpectrum.size() == npoints) && (planarSpectrum.size() == npoints);
+
+		double worst = 0;
+		size_t worstBin = 0;
+		size_t compared = 0;
+		float worstLevel = 0;
+		float peak = -INFINITY;
+		if(sizeOk)
+		{
+			for(size_t i=0; i<npoints; i++)
+				peak = max(peak, planarSpectrum[i]);
+
+			for(size_t i=0; i<npoints; i++)
+			{
+				if(planarSpectrum[i] < peak - dynamicRangeDb)
+					continue;
+				compared++;
+				double d = fabs(packedSpectrum[i] - planarSpectrum[i]);
+				if(d > worst)
+				{
+					worst = d;
+					worstBin = i;
+					worstLevel = planarSpectrum[i];
+				}
+			}
+		}
+
+		//Enough bins to be a real comparison, not just the tone and its neighbours. Not a
+		//fraction of the spectrum: how many bins clear the threshold is a property of the
+		//window's sidelobe rolloff, and Hann's is steep enough that only a few dozen do,
+		//against all 4096 for rectangular.
+		const size_t minCompared = 32;
+		bool matchOk = sizeOk && (compared >= minCompared) && (worst < 0.01);
+		LogNotice("packed vs planar %-12s: %zu bins over %.0f dBc, worst %.5f dB at bin %zu "
+			"(%.1f dBm) %s\n",
+			wf.name, compared, -dynamicRangeDb, worst, worstBin, worstLevel,
+			matchOk ? "ok" : "FAIL");
+
+		ok = ok && matchOk;
+	}
+
+	filt->Release();
+	return ok;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SigMFSource verification
 //
 // Opening a file and reading bytes proves very little. The real questions are whether the
@@ -300,7 +685,8 @@ static bool SpectrumPeakOfRecording(
 	filt->SetInput("center", StreamDescriptor(chan, 2));
 	filt->SetWindowFunction(FFTFilter::WINDOW_BLACKMAN_HARRIS);
 
-	shared_ptr<QueueHandle> queue(g_vkQueueManager->GetComputeQueue("SigMFSourceTest"));
+	shared_ptr<QueueHandle> queue(
+		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "SigMFSourceTest"));
 	vk::CommandPoolCreateInfo poolInfo(
 		vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 		queue->GetQueue()->m_family);
@@ -930,3 +1316,209 @@ bool VerifySpectrumDensity(PlayerSession& session, int64_t fftLength, int64_t bl
 	return ok;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// SpectrumEngine
+
+/**
+	@brief Pushes one tone through an engine and reports where it landed
+
+	@param engine		Engine to drive, already configured
+	@param useInt16		Push as ci16 rather than as float
+	@param fs			Sample rate
+	@param foffHz		Tone offset from centre
+	@param nsamples		Block length
+
+	@return Peak bin, or SIZE_MAX if no spectrum came out
+ */
+static size_t StepEngineWithTone(
+	SpectrumEngine& engine,
+	bool useInt16,
+	double fs,
+	double foffHz,
+	size_t nsamples,
+	float& peakDbm)
+{
+	peakDbm = -INFINITY;
+
+	double dphi = 2 * M_PI * foffHz / fs;
+
+	if(useInt16)
+	{
+		//Quantized the same way SynthesizePackedTone does, so a full scale tone is a full
+		//scale tone and the expected level is the same +10 dBm as the float case
+		vector<complex<int16_t>> iq(nsamples);
+		for(size_t i=0; i<nsamples; i++)
+		{
+			iq[i] = complex<int16_t>(
+				static_cast<int16_t>(lround(cos(dphi * i) * 32767.0)),
+				static_cast<int16_t>(lround(sin(dphi * i) * 32767.0)));
+		}
+		engine.Step(span<const complex<int16_t>>(iq));
+	}
+	else
+	{
+		vector<complex<float>> iq(nsamples);
+		for(size_t i=0; i<nsamples; i++)
+			iq[i] = complex<float>(cos(dphi * i), sin(dphi * i));
+		engine.Step(span<const complex<float>>(iq));
+	}
+
+	auto cap = dynamic_cast<UniformAnalogWaveform*>(engine.GetFFT()->GetData(0));
+	if(!cap)
+		return SIZE_MAX;
+	cap->PrepareForCpuAccess();
+
+	size_t npoints = static_cast<size_t>(engine.GetConfig().fftLength);
+	if(cap->size() < npoints)
+		return SIZE_MAX;
+
+	size_t peak = 0;
+	for(size_t i=0; i<npoints; i++)
+	{
+		if(cap->m_samples[i] > peakDbm)
+		{
+			peakDbm = cap->m_samples[i];
+			peak = i;
+		}
+	}
+	return peak;
+}
+
+bool VerifySpectrumEngine()
+{
+	LogNotice("\nSpectrumEngine verification\n");
+	LogIndenter li;
+
+	bool ok = true;
+
+	const double fs = 61.44e6;
+	const int64_t npoints = 4096;
+	const int64_t nblocks = 4;
+	const double binHz = fs / npoints;
+	const double centerHz = 1e9;
+
+	//A unit amplitude complex tone is +10 dBm into 50 ohms, and quantizing it to int16 leaves
+	//it there to within half an LSB. Both input types must therefore agree with this and with
+	//each other.
+	const float expectedDbm = 10.0f;
+
+	//Both signs, because a positive-only offset passes even when I and Q are swapped or the
+	//fftshift runs backwards - the two failures this test exists to catch
+	const double offsets[] = { +512 * binHz, -512 * binHz, +1 * binHz, -1 * binHz };
+
+	shared_ptr<QueueHandle> queue(
+		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "SpectrumEngineTest"));
+	SpectrumEngine engine(EnginePart::All, queue);
+
+	EngineConfig cfg;
+	cfg.fftLength = npoints;
+	cfg.blockSize = npoints * nblocks;
+	cfg.groupSize = 1;
+	cfg.window = FFTFilter::WINDOW_RECTANGULAR;
+	cfg.sampleRate = fs;
+	cfg.centerFrequency = centerHz;
+	engine.Configure(cfg);
+
+	for(int useInt16=0; useInt16<2; useInt16++)
+	{
+		const char* label = useInt16 ? "ci16 " : "cf32 ";
+
+		for(double foff : offsets)
+		{
+			float peakDbm = -INFINITY;
+			size_t peak = StepEngineWithTone(
+				engine, useInt16 != 0, fs, foff, static_cast<size_t>(npoints * nblocks), peakDbm);
+
+			if(peak == SIZE_MAX)
+			{
+				LogError("%sf_off %11s: engine produced no spectrum\n",
+					label, Unit(Unit::UNIT_HZ).PrettyPrint(foff).c_str());
+				ok = false;
+				continue;
+			}
+
+			//fftshift puts DC at the middle bin, so a tone at +k bins lands k above it
+			size_t expectedBin = static_cast<size_t>(npoints / 2 + lround(foff / binHz));
+
+			bool binOk = (peak == expectedBin);
+			bool dbmOk = (fabs(peakDbm - expectedDbm) < 0.1);
+
+			LogNotice("%sf_off %11s: peak bin %5zu (expected %5zu) %s, %7.3f dBm %s\n",
+				label,
+				Unit(Unit::UNIT_HZ).PrettyPrint(foff).c_str(),
+				peak, expectedBin, binOk ? "ok" : "MISMATCH",
+				peakDbm, dbmOk ? "ok" : "MISMATCH");
+
+			ok = (ok && binOk && dbmOk);
+		}
+	}
+
+	//The parts mask has to actually omit things, or a spectrum-only display still pays for a
+	//waterfall's ring buffer and a waterfall-only one still pays for the hit histogram
+	{
+		SpectrumEngine densityOnly(EnginePart::Density, queue);
+		SpectrumEngine waterfallOnly(EnginePart::Waterfall, queue);
+
+		bool maskOk =
+			(densityOnly.GetDensity() != nullptr) &&
+			(densityOnly.GetWaterfall() == nullptr) &&
+			(densityOnly.GetReducer() == nullptr) &&
+			(waterfallOnly.GetDensity() == nullptr) &&
+			(waterfallOnly.GetWaterfall() != nullptr) &&
+			(waterfallOnly.GetReducer() != nullptr);
+
+		LogNotice("parts mask: Density and Waterfall build only their own halves %s\n",
+			maskOk ? "ok" : "MISMATCH");
+		ok = ok && maskOk;
+
+		//A Density-only engine has no reducer to gate on, so it must report STEP_BLOCK rather
+		//than dereferencing a null waterfall
+		vector<complex<float>> iq(static_cast<size_t>(npoints));
+		for(size_t i=0; i<iq.size(); i++)
+			iq[i] = complex<float>(1.0f, 0.0f);
+
+		EngineConfig dcfg = cfg;
+		dcfg.blockSize = npoints;
+		densityOnly.Configure(dcfg);
+
+		auto r = densityOnly.Step(span<const complex<float>>(iq));
+		bool stepOk = (r == SpectrumEngine::STEP_BLOCK);
+		LogNotice("density-only engine steps without a waterfall %s\n", stepOk ? "ok" : "MISMATCH");
+		ok = ok && stepOk;
+	}
+
+	//Group size decides how many spectra fold into one row. With a group larger than the
+	//spectra in a block, the first block must not produce a row.
+	{
+		SpectrumEngine grouped(EnginePart::All, queue);
+
+		EngineConfig gcfg = cfg;
+		gcfg.blockSize = npoints;		//one spectrum per block
+		gcfg.groupSize = 4;
+		grouped.Configure(gcfg);
+
+		vector<complex<float>> iq(static_cast<size_t>(npoints));
+		double dphi = 2 * M_PI * (100 * binHz) / fs;
+		for(size_t i=0; i<iq.size(); i++)
+			iq[i] = complex<float>(cos(dphi * i), sin(dphi * i));
+
+		int rows = 0;
+		for(int i=0; i<4; i++)
+		{
+			if(grouped.Step(span<const complex<float>>(iq)) == SpectrumEngine::STEP_ROW)
+				rows++;
+		}
+
+		bool groupOk = (rows == 1) && (grouped.GetRowsPlayed() == 1);
+		LogNotice("group size 4: %d row(s) from 4 single-spectrum blocks (expected 1) %s\n",
+			rows, groupOk ? "ok" : "MISMATCH");
+		ok = ok && groupOk;
+	}
+
+	if(ok)
+		LogNotice("SpectrumEngine verification PASSED\n");
+	else
+		LogError("SpectrumEngine verification FAILED\n");
+	return ok;
+}

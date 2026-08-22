@@ -87,7 +87,7 @@ struct BenchSink : gr::Block<BenchSink<T>>
 
 	void start()
 	{
-		auto queue = g_vkQueueManager->GetComputeQueue("gr4-bench");
+		auto queue = g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "gr4-bench");
 		_engine = make_unique<SpectrumEngine>(EnginePart::All, queue);
 
 		EngineConfig cfg;

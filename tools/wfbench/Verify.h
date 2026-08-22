@@ -31,6 +31,17 @@
 bool VerifyComplexFFTFilter();
 
 /**
+	@brief Checks the packed I/Q datapath against the planar float one
+
+	Needs no recording: the same tone is synthesized twice, once as ci16 words for the fused
+	unpack/window shader and once as the quantized floats those words decode to for the
+	planar path, and the two spectra are required to agree. Also exercises a multi-transform
+	block, which is the only thing that covers the batched dispatch's per-transform window
+	indexing.
+ */
+bool VerifyPackedIQPath();
+
+/**
 	@brief Checks that a recording of a known tone decodes to the right frequency
 
 	@param path			Path to the .sigmf-meta file
@@ -55,5 +66,19 @@ bool VerifyBatchedFFT(PlayerSession& session, int64_t fftLength);
 	@brief Checks the density histogram, its column totals, and the traces derived from it
  */
 bool VerifySpectrumDensity(PlayerSession& session, int64_t fftLength, int64_t blockSize);
+
+/**
+	@brief Checks SpectrumEngine end to end from a raw IQ span
+
+	Needs no recording. Synthesizes the same tone in both supported input types and requires
+	each to land in the right bin at the right level, which is the only thing that exercises
+	IqInjector's claim that a std::complex push is a memcpy: if the layout assumption were
+	wrong the tone would decode as noise, and if I and Q were swapped it would decode at the
+	mirrored bin, which a positive-only offset would not catch.
+
+	Also checks that the engine's parts mask actually omits what it says it does, and that a
+	waterfall row appears after the configured number of spectra rather than immediately.
+ */
+bool VerifySpectrumEngine();
 
 #endif
