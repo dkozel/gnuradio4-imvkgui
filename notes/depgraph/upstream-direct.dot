@@ -1,0 +1,91 @@
+digraph "sigmf-spectrum -> upstream headers (direct #include only)" {
+  rankdir=LR;
+  ranksep=2.2;
+  node [shape=box, style="filled,rounded", fontname="Helvetica", fontsize=10];
+  edge [color="#aaaaaa", arrowsize=0.6];
+  subgraph cluster_ours {
+    label="sigmf-spectrum sources"; color="#1f3b73"; fontname="Helvetica-Bold";
+    "src/imcufosphor/AnalyzerSource.h" [label="AnalyzerSource.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/AnnotationOverlay.h" [label="AnnotationOverlay.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/ComplexFFTFilter.h" [label="ComplexFFTFilter.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/GpuTimer.h" [label="GpuTimer.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/IqInjector.h" [label="IqInjector.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/MainWindow.h" [label="MainWindow.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/PackedIQWaveform.h" [label="PackedIQWaveform.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/PlotAxis.h" [label="PlotAxis.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/RecordingClock.cpp" [label="RecordingClock.cpp", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/RenderHost.h" [label="RenderHost.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/SigMFSource.h" [label="SigMFSource.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/SpectrumArea.h" [label="SpectrumArea.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/SpectrumDensity.h" [label="SpectrumDensity.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/SpectrumReducer.h" [label="SpectrumReducer.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/WaterfallArea.h" [label="WaterfallArea.h", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/imcufosphor/main.cpp" [label="main.cpp", color="#1f3b73", fillcolor="#dce6fa"];
+    "src/ngscopeclient-compat/PreferenceSchema.cpp" [label="PreferenceSchema.cpp", color="#1f3b73", fillcolor="#dce6fa"];
+  }
+  subgraph cluster_ngscopeclient {
+    label="ngscopeclient"; color="#5a2a6b"; fontname="Helvetica-Bold";
+    "lib/scopehal-apps/src/ngscopeclient/PreferenceManager.h" [label="PreferenceManager.h", color="#5a2a6b", fillcolor="#f0dcfa"];
+    "lib/scopehal-apps/src/ngscopeclient/PreferenceTypes.h" [label="PreferenceTypes.h", color="#5a2a6b", fillcolor="#f0dcfa"];
+    "lib/scopehal-apps/src/ngscopeclient/TextureManager.h" [label="TextureManager.h", color="#5a2a6b", fillcolor="#f0dcfa"];
+    "lib/scopehal-apps/src/ngscopeclient/VulkanWindow.h" [label="VulkanWindow.h", color="#5a2a6b", fillcolor="#f0dcfa"];
+    "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h" [label="ngscopeclient.h", color="#5a2a6b", fillcolor="#f0dcfa"];
+  }
+  subgraph cluster_scopehal {
+    label="scopehal"; color="#255c3a"; fontname="Helvetica-Bold";
+    "lib/scopehal/scopehal/ComplexChannel.h" [label="ComplexChannel.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/ComputePipeline.h" [label="ComputePipeline.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/DensityFunctionWaveform.h" [label="DensityFunctionWaveform.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/Filter.h" [label="Filter.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/Oscilloscope.h" [label="Oscilloscope.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/PeakDetectionFilter.h" [label="PeakDetectionFilter.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/Unit.h" [label="Unit.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/VulkanFFTPlan.h" [label="VulkanFFTPlan.h", color="#255c3a", fillcolor="#dcf2e4"];
+    "lib/scopehal/scopehal/scopehal.h" [label="scopehal.h", color="#255c3a", fillcolor="#dcf2e4"];
+  }
+  subgraph cluster_scopeprotocols {
+    label="scopeprotocols"; color="#6b4a12"; fontname="Helvetica-Bold";
+    "lib/scopehal/scopeprotocols/FFTFilter.h" [label="FFTFilter.h", color="#6b4a12", fillcolor="#faedcf"];
+    "lib/scopehal/scopeprotocols/Waterfall.h" [label="Waterfall.h", color="#6b4a12", fillcolor="#faedcf"];
+    "lib/scopehal/scopeprotocols/scopeprotocols.h" [label="scopeprotocols.h", color="#6b4a12", fillcolor="#faedcf"];
+  }
+  "src/imcufosphor/AnalyzerSource.h" -> "lib/scopehal/scopeprotocols/Waterfall.h";
+  "src/imcufosphor/AnnotationOverlay.h" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+  "src/imcufosphor/ComplexFFTFilter.h" -> "lib/scopehal/scopehal/PeakDetectionFilter.h";
+  "src/imcufosphor/ComplexFFTFilter.h" -> "lib/scopehal/scopehal/VulkanFFTPlan.h";
+  "src/imcufosphor/ComplexFFTFilter.h" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/ComplexFFTFilter.h" -> "lib/scopehal/scopeprotocols/FFTFilter.h";
+  "src/imcufosphor/GpuTimer.h" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/IqInjector.h" -> "lib/scopehal/scopehal/ComplexChannel.h";
+  "src/imcufosphor/MainWindow.h" -> "lib/scopehal-apps/src/ngscopeclient/TextureManager.h";
+  "src/imcufosphor/MainWindow.h" -> "lib/scopehal-apps/src/ngscopeclient/VulkanWindow.h";
+  "src/imcufosphor/MainWindow.h" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+  "src/imcufosphor/PackedIQWaveform.h" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/PlotAxis.h" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+  "src/imcufosphor/PlotAxis.h" -> "lib/scopehal/scopehal/Unit.h";
+  "src/imcufosphor/RecordingClock.cpp" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/RenderHost.h" -> "lib/scopehal-apps/src/ngscopeclient/TextureManager.h";
+  "src/imcufosphor/RenderHost.h" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+  "src/imcufosphor/SigMFSource.h" -> "lib/scopehal/scopehal/ComplexChannel.h";
+  "src/imcufosphor/SigMFSource.h" -> "lib/scopehal/scopehal/Oscilloscope.h";
+  "src/imcufosphor/SigMFSource.h" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/SpectrumArea.h" -> "lib/scopehal-apps/src/ngscopeclient/TextureManager.h";
+  "src/imcufosphor/SpectrumArea.h" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+  "src/imcufosphor/SpectrumArea.h" -> "lib/scopehal/scopehal/ComputePipeline.h";
+  "src/imcufosphor/SpectrumDensity.h" -> "lib/scopehal/scopehal/ComputePipeline.h";
+  "src/imcufosphor/SpectrumDensity.h" -> "lib/scopehal/scopehal/DensityFunctionWaveform.h";
+  "src/imcufosphor/SpectrumDensity.h" -> "lib/scopehal/scopehal/Filter.h";
+  "src/imcufosphor/SpectrumDensity.h" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/SpectrumReducer.h" -> "lib/scopehal/scopehal/ComputePipeline.h";
+  "src/imcufosphor/SpectrumReducer.h" -> "lib/scopehal/scopehal/Filter.h";
+  "src/imcufosphor/SpectrumReducer.h" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/WaterfallArea.h" -> "lib/scopehal-apps/src/ngscopeclient/TextureManager.h";
+  "src/imcufosphor/WaterfallArea.h" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+  "src/imcufosphor/WaterfallArea.h" -> "lib/scopehal/scopehal/ComputePipeline.h";
+  "src/imcufosphor/WaterfallArea.h" -> "lib/scopehal/scopeprotocols/Waterfall.h";
+  "src/imcufosphor/main.cpp" -> "lib/scopehal/scopehal/scopehal.h";
+  "src/imcufosphor/main.cpp" -> "lib/scopehal/scopeprotocols/scopeprotocols.h";
+  "src/ngscopeclient-compat/PreferenceSchema.cpp" -> "lib/scopehal-apps/src/ngscopeclient/PreferenceManager.h";
+  "src/ngscopeclient-compat/PreferenceSchema.cpp" -> "lib/scopehal-apps/src/ngscopeclient/PreferenceTypes.h";
+  "src/ngscopeclient-compat/PreferenceSchema.cpp" -> "lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h";
+}

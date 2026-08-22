@@ -1,0 +1,88 @@
+sigmf-spectrum include dependencies (project files -> what they pull in)
+
+src/imcufosphor/AnalyzerPane.cpp
+    project: AnalyzerPane.h
+src/imcufosphor/AnalyzerPane.h
+    project: AnalyzerSource.h, AnnotationOverlay.h, SpectrumArea.h
+src/imcufosphor/AnalyzerSource.h
+    project: RowHistory.h, SpectrumDensity.h
+    extern : scopeprotocols
+src/imcufosphor/Annotation.cpp
+    project: Annotation.h
+    extern : <system / toolchain>
+src/imcufosphor/Annotation.h
+    extern : <system / toolchain>
+src/imcufosphor/AnnotationOverlay.cpp
+    project: AnnotationOverlay.h
+src/imcufosphor/AnnotationOverlay.h
+    project: Annotation.h, PlayerSession.h, PlotAxis.h
+    extern : lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h
+src/imcufosphor/ComplexFFTFilter.cpp
+    project: ComplexFFTFilter.h
+src/imcufosphor/ComplexFFTFilter.h
+    project: PackedIQWaveform.h
+    extern : scopehal, scopeprotocols
+src/imcufosphor/GpuTimer.cpp
+    project: GpuTimer.h
+src/imcufosphor/GpuTimer.h
+    extern : scopehal
+src/imcufosphor/IqInjector.cpp
+    project: IqInjector.h
+src/imcufosphor/IqInjector.h
+    project: PackedIQWaveform.h
+    extern : scopehal
+src/imcufosphor/MainWindow.cpp
+    project: MainWindow.h
+src/imcufosphor/MainWindow.h
+    project: AnalyzerPane.h
+    extern : lib/scopehal-apps/src/ngscopeclient/TextureManager.h, lib/scopehal-apps/src/ngscopeclient/VulkanWindow.h, lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h
+src/imcufosphor/PackedIQWaveform.h
+    extern : scopehal
+src/imcufosphor/PlayerSession.cpp
+    project: PlayerSession.h
+src/imcufosphor/PlayerSession.h
+    project: AnalyzerSource.h, ComplexFFTFilter.h, GpuTimer.h, SigMFSource.h, SpectrumReducer.h
+src/imcufosphor/PlotAxis.cpp
+    project: PlotAxis.h
+src/imcufosphor/PlotAxis.h
+    extern : lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h, scopehal
+src/imcufosphor/RecordingClock.cpp
+    project: RecordingClock.h
+    extern : scopehal
+src/imcufosphor/RenderHost.cpp
+    project: RenderHost.h
+src/imcufosphor/RenderHost.h
+    extern : lib/scopehal-apps/src/ngscopeclient/TextureManager.h, lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h
+src/imcufosphor/RowHistory.h
+    extern : <system / toolchain>
+src/imcufosphor/SigMFSource.cpp
+    project: SigMFSource.h
+    extern : <system / toolchain>
+src/imcufosphor/SigMFSource.h
+    project: Annotation.h, PackedIQWaveform.h, RecordingClock.h
+    extern : libsigmf, scopehal
+src/imcufosphor/SpectrumArea.cpp
+    project: SpectrumArea.h
+src/imcufosphor/SpectrumArea.h
+    project: PlotAxis.h, SpectrumDensity.h, WaterfallArea.h
+    extern : lib/scopehal-apps/src/ngscopeclient/TextureManager.h, lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h, scopehal
+src/imcufosphor/SpectrumDensity.cpp
+    project: SpectrumDensity.h
+src/imcufosphor/SpectrumDensity.h
+    extern : scopehal
+src/imcufosphor/SpectrumEngine.cpp
+    project: SpectrumEngine.h
+src/imcufosphor/SpectrumEngine.h
+    project: AnalyzerSource.h, ComplexFFTFilter.h, GpuTimer.h, IqInjector.h, SpectrumReducer.h
+src/imcufosphor/SpectrumReducer.cpp
+    project: SpectrumReducer.h
+src/imcufosphor/SpectrumReducer.h
+    extern : scopehal
+src/imcufosphor/WaterfallArea.cpp
+    project: WaterfallArea.h
+src/imcufosphor/WaterfallArea.h
+    project: PlotAxis.h, RecordingClock.h, RowHistory.h
+    extern : lib/scopehal-apps/src/ngscopeclient/TextureManager.h, lib/scopehal-apps/src/ngscopeclient/ngscopeclient.h, scopehal, scopeprotocols
+src/imcufosphor/main.cpp
+    project: ComplexFFTFilter.h, MainWindow.h
+    extern : scopehal, scopeprotocols
