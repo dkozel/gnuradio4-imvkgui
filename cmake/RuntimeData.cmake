@@ -18,7 +18,11 @@ function(imcufosphor_attach_shaders target extra_spv_dir)
 		COMMAND ${CMAKE_COMMAND}
 			"-DSRC_DIRS=${IMCUFOSPHOR_SHADER_SOURCE_DIRS}|${extra_spv_dir}"
 			"-DDEST_DIR=$<TARGET_FILE_DIR:${target}>/shaders"
-			-P "${PROJECT_SOURCE_DIR}/cmake/CollectShaders.cmake"
+			# CMAKE_CURRENT_FUNCTION_LIST_DIR, not PROJECT_SOURCE_DIR: the latter resolves to
+			# the nearest enclosing project(), so a caller inside a subproject - gr-imcufosphor
+			# declares its own so it can be split out later - would look for the script under
+			# that subproject instead of next to this file.
+			-P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CollectShaders.cmake"
 		COMMENT "Collecting compute shaders into $<TARGET_FILE_DIR:${target}>/shaders"
 		VERBATIM)
 endfunction()
