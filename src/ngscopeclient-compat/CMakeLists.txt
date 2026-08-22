@@ -134,3 +134,9 @@ set_property(TARGET ngscopeclient-compat PROPERTY POSITION_INDEPENDENT_CODE ON)
 add_executable(ngscopeclient-compat-linkcheck LinkCheck.cpp)
 target_compile_options(ngscopeclient-compat-linkcheck PRIVATE ${IMCUFOSPHOR_WERROR_FLAGS})
 target_link_libraries(ngscopeclient-compat-linkcheck ngscopeclient-compat)
+
+# Registered with ctest rather than left to be run by hand. Without --window it opens
+# nothing and exits immediately, so it is safe on a headless build machine, and it is the
+# only thing that would notice the preference schema going out of step with what
+# VulkanWindow asks for - which is a startup crash, not a compile error.
+add_test(NAME window-linkcheck COMMAND ngscopeclient-compat-linkcheck)

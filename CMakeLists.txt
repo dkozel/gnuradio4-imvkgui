@@ -265,6 +265,14 @@ add_subdirectory("${SCOPEHAL_APPS_DIR}/src/ngscopeclient/shaders" ngscopeclient-
 # Application
 ########################################################################
 
+# Testing is enabled unconditionally, and ahead of every directory that registers a test.
+#
+# It used to live inside the BUILD_GR4_BLOCKS block below, which meant the default build
+# configuration had no tests at all - not a short suite, none - and the only correctness
+# check in the project was a wfbench invocation someone had to remember to type.
+include(CTest)
+enable_testing()
+
 # Display primitives lifted from scopehal-apps, referenced in place (D4).
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/ngscopeclient-compat")
 
@@ -284,9 +292,6 @@ option(BUILD_GR4_BLOCKS "Build the GNU Radio 4 display blocks" OFF)
 if(BUILD_GR4_BLOCKS)
 	find_package(PkgConfig REQUIRED)
 	pkg_check_modules(GNURADIO4 REQUIRED IMPORTED_TARGET gnuradio4)
-
-	include(CTest)
-	enable_testing()
 
 	add_subdirectory("${PROJECT_SOURCE_DIR}/gr-imcufosphor")
 endif()
