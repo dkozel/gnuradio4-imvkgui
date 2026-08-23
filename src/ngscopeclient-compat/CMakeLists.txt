@@ -106,6 +106,13 @@ SYSTEM PUBLIC
 	${NG_IMGUI_DIR}/backends
 	)
 
+# IMGUI_DEFINE_MATH_OPERATORS decides whether ImVec2 has arithmetic operators, so it changes
+# the type's interface. It used to be a #define at ngscopeclient.h:37, which meant it was on
+# for any translation unit that happened to include that umbrella and off for the rest -
+# including imgui's own sources. Objects then disagree about what ImVec2 is, and the linker
+# cannot diagnose it. As a PUBLIC definition on this target it is on everywhere or nowhere.
+target_compile_definitions(ngscopeclient-compat PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
+
 # scopehal is PUBLIC because ngscopeclient.h includes ../scopehal/scopehal.h,
 # which resolves through scopehal's own exported include directory, and because
 # VulkanWindow.h exposes QueueHandle and vk::raii types in its interface.

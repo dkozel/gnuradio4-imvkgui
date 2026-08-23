@@ -11,8 +11,7 @@
 #ifndef SpectrumArea_h
 #define SpectrumArea_h
 
-#include "ngscopeclient.h"
-#include "TextureManager.h"
+#include "TextureCompat.h"
 
 #include <scopehal/ComputePipeline.h>
 

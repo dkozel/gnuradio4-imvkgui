@@ -231,6 +231,7 @@ set(IMCUFOSPHOR_APP_SPV_DIR "${PROJECT_BINARY_DIR}/src/imcufosphor/shaders-spv")
 # imcufosphor_attach_shaders() / imcufosphor_attach_icons(), used by every executable that
 # touches a ComputePipeline or a colour ramp.
 include("${PROJECT_SOURCE_DIR}/cmake/RuntimeData.cmake")
+include("${PROJECT_SOURCE_DIR}/cmake/HeaderSelfCheck.cmake")
 
 
 # libsigmf, header-only. Builds flatc from its bundled flatbuffers on first

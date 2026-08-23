@@ -11,10 +11,7 @@
 #ifndef RenderHost_h
 #define RenderHost_h
 
-//ngscopeclient.h first: TextureManager.h uses ImTextureID, GLFWimage and QueueHandle without
-//including anything that declares them, so it only compiles behind the app's umbrella header.
-#include "ngscopeclient.h"
-#include "TextureManager.h"
+#include "TextureCompat.h"
 
 #include <atomic>
 #include <memory>

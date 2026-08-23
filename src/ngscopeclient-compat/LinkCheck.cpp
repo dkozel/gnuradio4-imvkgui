@@ -21,9 +21,7 @@
 	See notes/R2-lifted-primitives.md.
  */
 
-#include "ngscopeclient.h"
-#include "TextureManager.h"
-#include "VulkanWindow.h"
+#include "VulkanWindowCompat.h"
 #include "PreferenceManager.h"
 #include "PreferenceTypes.h"
 

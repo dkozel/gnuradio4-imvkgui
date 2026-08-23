@@ -11,7 +11,7 @@
 #ifndef PlotAxis_h
 #define PlotAxis_h
 
-#include "ngscopeclient.h"
+#include "ImGuiCompat.h"
 
 #include <scopehal/Unit.h>
 

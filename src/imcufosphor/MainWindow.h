@@ -11,9 +11,7 @@
 #ifndef MainWindow_h
 #define MainWindow_h
 
-#include "ngscopeclient.h"
-#include "VulkanWindow.h"
-#include "TextureManager.h"
+#include "VulkanWindowCompat.h"
 
 #include "AnalyzerPane.h"
 #include "PlayerSession.h"

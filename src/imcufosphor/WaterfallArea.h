@@ -11,8 +11,7 @@
 #ifndef WaterfallArea_h
 #define WaterfallArea_h
 
-#include "ngscopeclient.h"
-#include "TextureManager.h"
+#include "TextureCompat.h"
 
 #include <scopehal/ComputePipeline.h>
 #include <scopeprotocols/Waterfall.h>

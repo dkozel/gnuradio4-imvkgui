@@ -94,6 +94,31 @@ PUBLIC
 
 set_property(TARGET imcufosphor-render PROPERTY POSITION_INDEPENDENT_CODE ON)
 
+# Each of these headers compiled on its own, to prove it declares what it uses. See
+# cmake/HeaderSelfCheck.cmake for why this is a build target and not a convention.
+imcufosphor_header_selfcheck(imcufosphor-render-headercheck imcufosphor-render
+	HEADERS
+		${CMAKE_CURRENT_SOURCE_DIR}/AnalyzerPane.h
+		${CMAKE_CURRENT_SOURCE_DIR}/AnalyzerSource.h
+		${CMAKE_CURRENT_SOURCE_DIR}/Annotation.h
+		${CMAKE_CURRENT_SOURCE_DIR}/AnnotationOverlay.h
+		${CMAKE_CURRENT_SOURCE_DIR}/ComplexFFTFilter.h
+		${CMAKE_CURRENT_SOURCE_DIR}/GpuTimer.h
+		${CMAKE_CURRENT_SOURCE_DIR}/IqInjector.h
+		${CMAKE_CURRENT_SOURCE_DIR}/PackedIQWaveform.h
+		${CMAKE_CURRENT_SOURCE_DIR}/PlayerSession.h
+		${CMAKE_CURRENT_SOURCE_DIR}/PlotAxis.h
+		${CMAKE_CURRENT_SOURCE_DIR}/RecordingClock.h
+		${CMAKE_CURRENT_SOURCE_DIR}/RenderHost.h
+		${CMAKE_CURRENT_SOURCE_DIR}/RowHistory.h
+		${CMAKE_CURRENT_SOURCE_DIR}/SigMFSource.h
+		${CMAKE_CURRENT_SOURCE_DIR}/SpectrumArea.h
+		${CMAKE_CURRENT_SOURCE_DIR}/SpectrumDensity.h
+		${CMAKE_CURRENT_SOURCE_DIR}/SpectrumEngine.h
+		${CMAKE_CURRENT_SOURCE_DIR}/SpectrumReducer.h
+		${CMAKE_CURRENT_SOURCE_DIR}/WaterfallArea.h
+	)
+
 ########################################################################
 # Application
 ########################################################################

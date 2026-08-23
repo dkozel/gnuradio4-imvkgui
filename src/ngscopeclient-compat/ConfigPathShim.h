@@ -32,8 +32,8 @@
 #ifndef ConfigPathShim_h
 #define ConfigPathShim_h
 
-//Must come first: this is where ExpandPath() and CreateDirectory() are declared.
-#include "ngscopeclient.h"
+//ExpandPath() and CreateDirectory() are declared here.
+#include <scopehal/scopehal.h>
 
 #include <string>
 
