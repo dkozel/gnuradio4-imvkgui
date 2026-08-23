@@ -1,14 +1,20 @@
 Implements a spectrum analyzer display utility to render realtime spectrum from IQ data, using SigMF data as the initial data source.
 
-I've started with ngscopeclient and scopehal as the direct code inspiration, and the project pulls a variety of files directly from those codebases unmodified. These are BSD 3 Clause licenced.
+I've started with ngscopeclient and scopehal as the direct code inspiration. A trimmed subset
+of both is vendored into `third_party/`; see THIRD_PARTY.md for what, from where, and every
+local change. These are BSD 3 Clause licenced and every vendored file keeps its copyright
+header.
 
 The licencing needs to be formalized, but the intent is for all the scopehal style shaders and directly related code to be BSD 3 Clause to allow upstream usage, and for gr-imgui to be LGPL.
 
 # Building
 
-A fairly standard CMake superbuild. `scopehal`, `scopehal-apps` and `libsigmf` are consumed as
-git submodules; `scopehal` is built, `scopehal-apps` is a source donor referenced in place. See
-DESIGN.md for the architecture behind that split.
+A fairly standard CMake superbuild.
+
+Upstream code arrives two ways. `lib/` holds three submodules we never edit — `libsigmf`,
+`imgui` and `VkFFT`. `third_party/` holds vendored scopehal and ngscopeclient: copied in,
+trimmed to the 26 sources this project uses out of upstream's 386, and modified where they
+needed it. THIRD_PARTY.md records the provenance and every change; DESIGN.md D7 records why.
 
 ## Submodules
 
@@ -18,18 +24,8 @@ cd imcufosphor
 git submodule update --init --recursive
 ```
 
-`--recursive` is required: `libsigmf` bundles flatbuffers and nlohmann/json as its own
-submodules, and `scopehal` bundles VkFFT, canvas_ity, log and xptools.
-
-Recursing over everything also initializes six `scopehal-apps` submodules the build does not
-need (`doc`, `lib`, `ImGuiFileDialog`, `imgui-node-editor`, `imgui_markdown`,
-`nativefiledialog-extended`). To skip them, initialize selectively instead:
-
-```
-git submodule update --init --recursive lib/scopehal lib/libsigmf
-git submodule update --init lib/scopehal-apps
-git -C lib/scopehal-apps submodule update --init src/imgui
-```
+Three submodules, and `--recursive` is needed only for `libsigmf`, which bundles flatbuffers
+and nlohmann/json as its own.
 
 ## Dependencies
 
@@ -37,14 +33,17 @@ Beyond a Vulkan-capable toolchain, on Ubuntu 24.04:
 
 ```
 sudo apt install cmake build-essential pkg-config \
-    libyaml-cpp-dev libsigc++-3.0-dev libhidapi-dev libpng-dev zlib1g-dev \
+    libsigc++-3.0-dev libpng-dev zlib1g-dev \
     libglfw3-dev libvulkan-dev glslang-dev spirv-tools glslc
 ```
 
-`glslc` is used to compile compute shaders in `scopehal`, `scopeprotocols` and this project.
-`hidapi` is required by `xptools` even though this project talks to no HID instruments.
-If the Vulkan SDK is installed and `VULKAN_SDK` is exported, the top-level `CMakeLists.txt`
-prefers the SDK's packages over the distro ones.
+`glslc` compiles the compute shaders. If the Vulkan SDK is installed and `VULKAN_SDK` is
+exported, the top-level `CMakeLists.txt` prefers the SDK's packages over the distro ones.
+
+`libyaml-cpp-dev` and `libhidapi-dev` used to be required and are not any more. yaml-cpp
+served a filter-graph serializer for ngscopeclient session files, which this project does not
+have; hidapi was a hard requirement of scopehal's `xptools` even though nothing here talks to
+a HID instrument. Neither survived the vendoring.
 
 ## Build
 

@@ -1,5 +1,25 @@
 # imcufosphor — structural refactor: libraries, ingest, and rate parameters
 
+> **Partly superseded.** This was written before the vendoring (DESIGN.md D7), under the
+> assumption that upstream code would keep being referenced in place. Vendoring made most of
+> Phase A moot or free:
+>
+> - **A1** (the two bad includes) — done, and further: nothing includes `ngscopeclient.h`.
+> - **A3** (split `ngscopeclient-compat` five ways) — that library no longer exists. The
+>   natural split turned out to be two targets, `imgui` and `imcufosphor-window`, not five,
+>   because the preference stack and the state headers that motivated most of the boundaries
+>   are gone. The `IMGUI_DEFINE_MATH_OPERATORS` ODR hazard it identified was real and is
+>   fixed. The X11 link it flags is still there.
+> - **A5** (link checks and a header self-containment target) — both exist, as `ctest` cases
+>   and a build target.
+> - **A4** (split `imcufosphor-core`) is untouched and still worth doing.
+>
+> **Phases B, C and D are unaffected** and remain open: the render context and embed
+> contract, the write-into ingest API, and the rate model. B5's proposed scopehal patch is
+> now simply an edit to `third_party/scopehal`, which removes the argument about whether it
+> is worth the patch-maintenance burden.
+
+
 ## Context
 
 The project works: `sigmf-spectrum` plays a 245.76 MS/s recording at ~4.9× realtime with

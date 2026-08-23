@@ -1,5 +1,11 @@
 # R2 — lifting ngscopeclient's display primitives
 
+> **Historical.** This records what it cost to compile ngscopeclient's display primitives
+> *in place*, under DESIGN.md decision D4. D4 was superseded by D7: those files are now
+> vendored into `third_party/ngscopeclient/`, and three of the four problems below were
+> consequences of not being allowed to edit them. Kept because it is an accurate record of
+> what the reference-don't-copy policy cost, which is the evidence for abandoning it.
+
 Findings from implementing risk R2 (DESIGN.md §11, design §5): *does decision D4,
 "reference, don't copy", actually hold once the lifted primitives have to compile and
 link?*

@@ -1,5 +1,9 @@
 # Reducing the scopehal / ngscopeclient surface
 
+> **Historical.** The measurements here are what motivated the vendoring, and they were
+> taken before it. Every reduction identified below has since been made; see DESIGN.md D7
+> and THIRD_PARTY.md for the result.
+
 Follow-on to `notes/depgraph/`. That pass measured what is pulled in. This one asks which of
 it is load-bearing, and answers with symbol-level evidence rather than include counts.
 

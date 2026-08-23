@@ -41,10 +41,11 @@ and a shared cursor.
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| D1 | IQ enters the graph via a **SigMF virtual SDR driver**, an `Oscilloscope` subclass — *not* `ComplexImportFilter` | Bounded memory on arbitrarily large recordings; real run/stop/single semantics; provides the center-frequency scalar stream. See §7.1 for why `ComplexImportFilter` was rejected. |
+| D1 | IQ enters the graph via a **SigMF source class** owning a `ComplexChannel` — *not* `ComplexImportFilter` | Bounded memory on arbitrarily large recordings; real run/stop/single semantics; provides the center-frequency scalar stream. See §7.1 for why `ComplexImportFilter` was rejected. **Revised:** this was an `Oscilloscope` subclass until the vendoring. None of the three properties above came from that base class, and it cost 47 overrides to use six. |
 | D2 | Waterfall pane is driven by the **`Waterfall` filter** (live ring-buffer scroll), not `ComplexSpectrogramFilter` | One FFT feeds both panes, so spectrum and waterfall agree by construction. Matches the playback model. |
-| D3 | The complex FFT is an **app-local filter**, not added to `scopeprotocols` | Keeps both submodules unmodified. Upstreamable later if desired. |
-| D4 | Lifted display primitives are **referenced by path from a `scopehal-apps` submodule**, never copied | Upstream updates become a submodule bump with zero merge burden. |
+| D3 | The complex FFT is an **app-local filter**, not added to `scopeprotocols` | Was: keeps both submodules unmodified. Still true for a better reason — it is ours, so it is in `src/`, where our code lives. |
+| D4 | ~~Lifted display primitives are **referenced by path from a `scopehal-apps` submodule**, never copied~~ | **Superseded.** See D7. |
+| D7 | scopehal and ngscopeclient are **vendored into `third_party/`**: copied in, trimmed to what this project uses, and modified where needed | D4's premise was that referencing upstream in place makes updates a pointer bump with no merge burden. In practice it made them invisible: one bump removed an API `main.cpp` called and the tree stopped building, and the same bump silently dropped the patch this hardware needs, leaving every GPU transfer faulting the device. Neither was noticed, because nothing built or ran by default. The copy is 26 sources against upstream's 386, with a ten-file delta recorded in `THIRD_PARTY.md`. |
 | D5 | Annotation rendering is **phase 2**, core namespace only | Nice-to-have; the enabling machinery (row-history ring) is phase 1 anyway. |
 | D6 | True RTSA density ("fosphor-style") is **phase 3**; phase 1 uses upstream's built-in display persistence | Built-in persistence is free and looks right; true density needs the reducer interface designed correctly first. See §10. |
 
@@ -57,12 +58,18 @@ imcufosphor/
   CMakeLists.txt              superbuild, modeled on scopehal-apps/CMakeLists.txt
   DESIGN.md                   this file
   cmake/CollectShaders.cmake  gathers every built .spv next to the binary (§7.2)
-  lib/scopehal/               submodule → ngscopeclient/scopehal      (built)
-  lib/scopehal-apps/          submodule → ngscopeclient/scopehal-apps (source donor)
-  lib/libsigmf/               submodule → libsigmf                    (header-only)
+  THIRD_PARTY.md              what is vendored, from where, and every local change
+  licenses/                   upstream licence texts
+  lib/                        submodules: pinned, never edited
+    libsigmf/                 → deepsig/libsigmf     (header-only)
+    imgui/                    → ocornut/imgui        v1.92.8-docking
+    VkFFT/                    → ngscopeclient/VkFFT  (header-only)
+  third_party/                vendored: copied in, trimmed, ours to modify
+    scopehal/                 26 sources of upstream's 386, + 4 shaders of ~105
+    ngscopeclient/            VulkanWindow, TextureManager, 2 shaders, 1 ramp
   src/imcufosphor/
     main.cpp
-    SigMFSource.{cpp,h}       Oscilloscope subclass — the virtual SDR
+    SigMFSource.{cpp,h}       the recording, played into the graph
     ComplexFFTFilter.{cpp,h}  app-local complex FFT
     SpectrumReducer.{cpp,h}   N-in-1-out accumulator (see §5.3)
     PlayerSession.{cpp,h}     thin Session analogue
@@ -70,20 +77,21 @@ imcufosphor/
     WaterfallArea.{cpp,h}     thin waveform area — waterfall
     AnalyzerPane.{cpp,h}      combined stacked view, owns the shared axis
     AnnotationOverlay.{cpp,h} phase 2
-    MainWindow.{cpp,h}        subclasses the lifted VulkanWindow
-    PreferenceSchema.cpp      our schema; PreferenceManager itself unchanged
+    MainWindow.{cpp,h}        subclasses the vendored VulkanWindow
     shaders/                  our own compute shaders, plus their glslc step
       ComplexToLogMagnitudeShifted.glsl   fftshift + dBm for a spectrum trace (§7.2)
 ```
 
-The superbuild mirrors `scopehal-apps/CMakeLists.txt`: `add_subdirectory` over
-`lib/scopehal/{scopehal,scopeprotocols,xptools,log}`, with the same `find_package` set
-(Vulkan, glfw3, yaml-cpp, glslang, SPIRV-Tools, ZLIB, Threads, OpenMP). VkFFT needs no
-handling — `scopehal/CMakeLists.txt:298` exports it as `SYSTEM PUBLIC`.
+The superbuild builds `third_party/scopehal` and `third_party/ngscopeclient` directly.
+`find_package` set: Vulkan, glfw3, glslang, SPIRV-Tools, ZLIB, PNG, Threads, OpenMP, sigc++.
+yaml-cpp, hidapi, liblxi and libtirpc were all dropped by the vendoring — they belonged to
+the instrument drivers, the SCPI transports and the graph serialization, none of which this
+project has.
 
-`lib/scopehal-apps` is deliberately **not** an `add_subdirectory`. It is a source donor:
-`src/imcufosphor/CMakeLists.txt` names individual files from it via the
-`SCOPEHAL_APPS_DIR` cache variable.
+`third_party/` keeps upstream's directory shape (`scopehal/{scopehal,scopeprotocols,log,
+xptools}`) so that neither our `<scopehal/Filter.h>` includes nor upstream's own internal
+relative ones had to change. Both directories' CMakeLists fail the configure if a source file
+is present but unbuilt, or built but absent.
 
 `libsigmf` bundles flatbuffers and nlohmann/json as its own submodules and builds `flatc`
 on first configure, so the initial build is slower than subsequent ones. Its pre-generated
@@ -189,77 +197,88 @@ happens in our `CMakeLists.txt` rather than by patching the submodule.
 
 ---
 
-## 4. Layer 1 — upstream libraries, used unchanged
+## 4. Layer 1 — vendored upstream code
 
-**`libscopehal`**
+Vendored into `third_party/` rather than built from submodules; see D7 and `THIRD_PARTY.md`.
+What we actually use of it:
 
-- `VulkanInit(bool skipGLFW)` (`scopehal/scopehal.h:234`) — device, queues, memory
-  heaps. Library-side, so the GUI and compute paths share one device and tone-mapped
-  textures never round-trip through host memory.
-- `FilterGraphExecutor` — parallel graph scheduling is library-side, not app-side.
-- `Oscilloscope`, `ComplexChannel`, waveform types, `FindDataFile`.
+**From scopehal**
 
-**`libscopeprotocols`**
+- `VulkanInit(bool skipGLFW)` — device, queues, memory heaps. Library-side, so the GUI and
+  compute paths share one device and tone-mapped textures never round-trip through host
+  memory.
+- `AcceleratorBuffer` — 2183 header-only lines, and the reason `VulkanInit` is
+  non-negotiable.
+- `ComputePipeline`, `PipelineCacheManager`, `QueueManager`, `VulkanFFTPlan`.
+- The filter graph: `Filter`, `FlowGraphNode`, `FilterParameter`, `FilterGraphExecutor`,
+  `InstrumentChannel`, `OscilloscopeChannel`, `ComplexChannel`, the waveform types.
+- `Unit`, `FindDataFile`, `log`.
 
-- `Waterfall` — the scrolling ring buffer (D2).
-- `PeakHoldFilter`, `PeakDetectionFilter` — max hold and peak markers.
-- Complex **window** shaders, borrowed by our app-local FFT. The magnitude shaders are
-  not reusable and we supply our own; see §7.2.
+Not used, and not vendored: every SCPI transport, every instrument driver, the whole
+instrument model (`Oscilloscope`, `Instrument`, `Trigger`), the Touchstone and IBIS parsers.
+
+**From scopeprotocols**
+
+- `Waterfall` — the scrolling ring buffer (D2). One filter of 211.
+- Complex **window** shaders, used by our app-local FFT. The magnitude shaders are not
+  reusable and we supply our own; see §7.2.
+
+`PeakHoldFilter` and `PeakDetectionFilter` were listed here and neither was ever used.
+`ComplexFFTFilter` did inherit `PeakDetectionFilter`, but nothing read its output: peak
+detection defaults off, and when enabled it refuses any batch of more than one spectrum,
+which is the normal case. It also withheld `CommandBufferTailCall` while enabled, so an
+unreachable feature was shaping the scheduling of the one that runs.
 
 ---
 
-## 5. Layer 2 — borrowed display primitives
+## 5. Layer 2 — the vendored display primitives
 
-Referenced by path from the `scopehal-apps` submodule, never copied (D4). They live in
-**`src/ngscopeclient-compat/`**, which owns the whole borrowed-code boundary: it compiles
-the upstream sources in place, declares the entire inherited include graph in one file so
-the cost stays visible, holds every correction we need, and compiles upstream with `-w`
-while our own files there keep full warnings and `-Werror`. Application code does not
-belong in that directory.
+Two source files in `third_party/ngscopeclient/`, plus ImGui as its own target. See
+`THIRD_PARTY.md` for provenance and the exact local changes.
 
-Verified by building it — see `notes/R2-lifted-primitives.md` for the full account.
-
-| File | Why liftable |
-|------|--------------|
-| `VulkanWindow.cpp/h` | Already a subclassable base — `virtual DoRender`, `virtual RenderUI`. Only coupling is `PreferenceManager`, for window geometry persistence. |
-| `TextureManager.cpp/h` | Zero references to `MainWindow`/`Session`/`Preference`. Needs libpng. |
-| `PreferenceManager.cpp/h`, **`Preference.cpp`, `PreferenceTree.cpp`**, `Preference.h`, `PreferenceTypes.h` | Unchanged; we supply our own `PreferenceSchema.cpp`. The two `.cpp` files are **not optional** — `PreferenceManager::m_treeRoot` is a `PreferenceCategory` by value. |
-| `shaders/WaterfallToneMap.glsl` | Self-contained: push constants, fp32 input buffer, colorRamp sampler, output image. |
-| `shaders/waveform-compute.glsl`, `shaders/WaveformToneMap.glsl` | The analog trace rasterizer. **Borrowed deliberately** — display persistence lives inside it (§10). |
+| File | Why it is worth taking |
+|------|------------------------|
+| `VulkanWindow.{h,cpp}` | ~690 lines of GLFW + Vulkan + ImGui bring-up, swapchain management and frame loop that we would otherwise have written ourselves, with `virtual DoRender` / `virtual RenderUI` already the extension points. |
+| `TextureManager.{h,cpp}` | Vulkan image, view, sampler and ImGui descriptor-set lifetime, including the compute-written texture path `SpectrumArea` and `WaterfallArea` use directly. |
+| `shaders/WaterfallToneMap.glsl` | Self-contained: push constants, fp32 input buffer, colour ramp sampler, output image. |
+| `shaders/waveform-compute.glsl` | The analog trace rasterizer. **Borrowed deliberately** — display persistence lives inside it (§10). |
 
 The last row is a design commitment, not a convenience: `SpectrumArea` is a thin wrapper
-around the upstream rasterizer rather than original rendering code. Writing a simpler
-line renderer would silently forfeit phosphor and require rebuilding it later.
+around the upstream rasterizer rather than original rendering code. Writing a simpler line
+renderer would silently forfeit phosphor and require rebuilding it later. We build two of its
+sixteen compile-time variants.
 
-**Total cost of the lift:** 23 `ngscopeclient` files (5 compiled, 18 headers — the header
-graph also pulls `Marker.h` via `GuiLogSink.h` and `FontManager.h` via `Preference.h`),
-7 imgui translation units, and **1 of 5** `scopehal-apps` submodules (`src/imgui` only —
-the node editor, file dialog, markdown and nativefiledialog submodules stay uninitialized).
-Net new third-party dependencies: imgui and libpng.
+### What the lift cost, before and after
 
-**The `ngscopeclient.h` include graph was a non-problem.** No shim was needed: the state
-headers are pure declarations that include nothing outside `ngscopeclient/`, and
-`../scopehal/scopehal.h` resolves through scopehal's own exported include directory. A
-trimmed shim would not even have been *possible* — the borrowed `.cpp` files use a quoted
-include, which resolves next to themselves before any `-I` path can intercept it.
+The original attempt kept these files in place under the submodule, which is what D4
+required. That took **twelve files to compile two**: the two above, ngscopeclient's
+1604-line preference system, our 70-line schema for it, a 68-line preprocessor shim, and
+three compat headers. `notes/R2-lifted-primitives.md` is the account of getting that to
+build and link, and it stands as an accurate record of what reference-don't-copy cost.
 
-**Two upstream defects do need working around**, neither anticipated:
+Three of the four problems it documents were consequences of not being allowed to edit:
 
-1. `VulkanWindow::GetContentScale()` (`VulkanWindow.h:54`) is declared but **defined
-   nowhere** in scopehal-apps. ngscopeclient never calls it, so its link never fails;
-   ours does. Reimplement it in the subclass.
-2. `PreferenceManager` hardcodes `~/.config/ngscopeclient` (`PreferenceManager.cpp:115-118`)
-   and calls `SavePreferences()` from the destructor of a static singleton
-   (`PreferenceManager.h:55-58`). Linking it unmodified means our process **truncates the
-   real ngscopeclient user's preference file at exit**. Redirected by
-   `src/ngscopeclient-compat/ConfigPathShim.h`, a preprocessor interpose on scopehal's
-   `ExpandPath`/`CreateDirectory` applied to that one translation unit. **Unsolved on
-   Windows** — different code path, and `CreateDirectory` is a `windows.h` macro there.
+1. **`VulkanWindow::GetContentScale()` is declared and defined nowhere upstream.** Both our
+   window subclasses carried an identical ten-line `GetDpiScale()` working around it.
+2. **`VulkanWindow.h` had no `#include` directives at all**, and `TextureManager.h` named
+   `ImTextureID` and `GLFWimage` without declaring either. Both compiled only behind
+   `ngscopeclient.h` — 121 lines of umbrella over 1081 lines of instrument-session model,
+   which therefore reached every display header here and every GNU Radio block header
+   through them.
+3. **`PreferenceManager` hardcodes `~/.config/ngscopeclient`** and saves from a static
+   destructor, so linking it unmodified meant truncating the real ngscopeclient user's
+   preference file at exit. That needed a preprocessor interpose on scopehal's
+   `ExpandPath`/`CreateDirectory`, applied to one translation unit, and was **unsolved on
+   Windows**.
 
-`ngscopeclient-compat` is deliberately **not** linked into the application target yet.
-Nothing in the app consumes it until the display layer arrives (phase 1 step 6), and
-linking early would pull in imgui/GLFW/libpng for no benefit. `ngscopeclient-compat-linkcheck`
-keeps it verified in the meantime; re-run it after every submodule bump.
+All three are now one-line edits to files we own. The headers are self-contained, so the
+compat headers are gone; the preference system is replaced by a ten-field struct
+(`WindowGeometry.h`), so the shim and the schema are gone with it.
+
+The remaining cost: ImGui and libpng.
+
+`window-linkcheck` still exists and is registered with `ctest`. Its original purpose — proving
+reference-don't-copy links — is moot, but it is a good canary for the vendored window layer.
 
 ---
 
@@ -288,30 +307,41 @@ same data — they cannot disagree.
 
 ### 7.1 `SigMFSource`
 
-An `Oscilloscope` subclass. **Not** `SCPISDR`, which is transport-bound
-(`SCPISDR::CreateSDR(driver, SCPITransport*)`). `MockOscilloscope` is the model for an
-instrument with no transport.
+A plain class owning one `ComplexChannel`. It was an `Oscilloscope` subclass until the
+vendoring; see below for why it is not one now.
 
 Owns one `ComplexChannel` named "RX", which supplies **I, Q, and a `center` scalar
 stream** (`ComplexChannel.h:17`) — the third of these is required by any downstream
 complex filter and is the specific reason `ComplexImportFilter` is insufficient.
 
-`AcquireData()` reads N samples at the play cursor via `pread`/mmap, converts per
+`AcquireData()` reads N samples at the play cursor via `pread`, converts per
 `core:datatype`, and pushes a `SequenceSet` onto `m_pendingWaveforms`. `PlayerSession`
-consumes via `PollTrigger()` / `PopPendingWaveform()` (`scopehal/Oscilloscope.h:896-908`).
-Playback pacing, seek, and loop live here.
+consumes via `AcquireData()` / `PopPendingWaveform()`. Playback pacing, seek, and loop live
+here.
 
-**Implementation surface: 42 pure virtuals, not 37.** `Oscilloscope.h` declares 37, but
-`Instrument` adds five more that are easy to miss and only show up as "cannot declare
-variable of abstract type": `GetName`, `GetVendor`, `GetSerial`,
-`GetTransportConnectionString`, `GetTransportName` (`Instrument.h:117-136`). Most of the
-42 are irrelevant to a file source (coupling, attenuation, bandwidth limit, external
-trigger) and are stubbed.
+**Why it is no longer an `Oscilloscope`.** It inherited 47 overrides to use six, and only
+one of those six — `PopPendingWaveform()`, fifteen lines draining a queue this class fills
+itself — had a base implementation worth anything. The other 41 were stubs for hardware a
+recording does not have.
 
-`SetSampleRate()` is deliberately ignored rather than honoured — resampling a recording to
-a requested rate is not something a player should silently do. `GetSampleDepth()` /
-`SetSampleDepth()` map to the acquisition block size, which is the knob that trades FFT
-headroom against latency.
+They were not free. A subclass's vtable carries a slot for every non-pure virtual in the base
+chain, so the linker pulled in the implementation of each: `Oscilloscope::AutoZero`,
+`::Degauss`, `::GetADCMode`, `::GetInputMuxNames`, `::GetProbeName`,
+`Instrument::SerializeConfiguration`. Measured, that was 98 of the 195 scopehal symbols this
+application referenced; removing the base took the total from 195 to 143 and eliminated
+`Oscilloscope.cpp`, `Instrument.cpp`, `Trigger.cpp` and `EdgeTrigger.cpp` from the vendored
+tree entirely.
+
+The three properties D1 asks for all survive, because none came from the base class: bounded
+memory is this class's own `pread` loop, the center-frequency stream is `ComplexChannel`'s,
+and run/stop/single is three bools. `IqInjector` had already demonstrated the shape for live
+samples — a `ComplexChannel` with a null `Oscilloscope*`, which the verification suite drives
+a real `ComplexFFTFilter` from.
+
+`GetSampleDepth()` / `SetSampleDepth()` map to the acquisition block size, which is the knob
+that trades FFT headroom against latency. `SetSampleRate()` is gone rather than ignored:
+resampling a recording to a requested rate is not something a player should silently do, and
+with no base class there is no longer an interface demanding the method exist.
 
 **Why not `ComplexImportFilter`:** it does `fseek(END)` → `new uint8_t[len_bytes]` → one
 `fread` of the entire file (`ComplexImportFilter.cpp:92-110`), emitting a single waveform
@@ -518,7 +548,7 @@ N-in-1-out, so the reduction logic itself is new.
 ### 7.4 `PlayerSession`
 
 The thin `Session` analogue. Owns `SigMFSource`, runs the
-`PollTrigger`/`PopPendingWaveform` loop, drives `FilterGraphExecutor`, owns filter
+`AcquireData`/`PopPendingWaveform` loop, drives `FilterGraphExecutor`, owns filter
 instances, and implements the K-executions-per-waterfall-row scheduling from §7.3.
 
 ### 7.5 Display
@@ -701,7 +731,7 @@ the density accumulator for the spectrum.
 | # | Risk | Resolution |
 |---|------|------------|
 | ~~R1~~ | ~~fftshift/dBm shader may not be reusable from `ComplexToLogMagnitude.spv`~~ | **Resolved** — not reusable: it has the dBm conversion but no rotation, and `ComplexSpectrogramPostprocess.spv` has the rotation but also a normalization *and* a transposed image layout. One app-local shader, `ComplexToLogMagnitudeShifted.glsl`. Also uncovered: uninstalled builds resolve no shaders at all, and upstream's complex spectrogram is 9.03 dB off `FFTFilter`'s dBm convention. See §7.2 |
-| ~~R2~~ | ~~`ngscopeclient.h` include graph drags state headers into lifted files~~ | **Resolved** — D4 holds, no upstream file modified. The include graph needed no shim at all. Two unanticipated upstream defects did need working around (undefined `GetContentScale()`, and `PreferenceManager` clobbering the real ngscopeclient config). See §5 |
+| ~~R2~~ | ~~`ngscopeclient.h` include graph drags state headers into lifted files~~ | **Resolved by deletion.** It was real, not a non-problem: that umbrella brought 1081 lines of instrument-session model into every display header here and every GNU Radio block header through them. Nothing includes it now — the two vendored headers declare what they use. See §5 and D7 |
 | R6 | `ConfigPathShim.h` has no Windows implementation (§5) | Needed before any Windows build; `CreateDirectory` is a `windows.h` macro and the path logic differs |
 | ~~R7~~ | ~~Vulkan device loss on this workstation's RTX 5060 Ti~~ | **Resolved locally** — NVIDIA driver defect: `vkCmdSetEvent` with a `TRANSFER` stage mask on an async-compute queue, when a graphics queue also exists, faults the device. 166-line scopehal-free repro in `tools/vkmintest/xid32_repro.cpp`; scopehal-wide, upstream's own `tests/Acceleration` fails identically. Unblocked by a tracked local patch (`patches/README.md`); GPU verification now passes with no device override. **Upstreaming still open** — see §3 |
 | ~~R3~~ | ~~`get_sample_size()` complex-pair ambiguity~~ | **Resolved** — returns bytes per complex pair; see §7.1 |
