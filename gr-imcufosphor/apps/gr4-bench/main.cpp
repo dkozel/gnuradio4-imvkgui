@@ -275,10 +275,18 @@ int main(int argc, char* argv[])
 		fprintf(stderr, "Failed to initialize Vulkan\n");
 		return 1;
 	}
-	TransportStaticInit();
-	DriverStaticInit();
+	//DriverStaticInit() is three lines of initialization we genuinely depend on followed by
+	//about a hundred AddDriverClass calls for instruments this application will never open, so
+	//call the three directly. InitializeSearchPaths() is what makes FindDataFile() resolve
+	//shaders/*.spv next to the binary; DetectCPUFeatures() sets the g_has* flags that inline
+	//code in scopehal's headers reads; Unit::InitializeLocales() is required before any
+	//PrettyPrint(). TransportStaticInit() registers twelve SCPI transports and
+	//InitializePlugins() dlopens whatever it finds in /usr/lib/scopehal/plugins, neither of
+	//which has anything to offer a file player.
+	InitializeSearchPaths();
+	DetectCPUFeatures();
+	Unit::InitializeLocales();
 	ScopeProtocolStaticInit();
-	InitializePlugins();
 	RegisterImcufosphorFilters();
 
 	printf("gr4-bench: %s, fft %u, block %u, %.1f s per stage\n",
