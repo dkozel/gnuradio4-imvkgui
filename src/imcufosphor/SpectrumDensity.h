@@ -11,10 +11,10 @@
 #ifndef SpectrumDensity_h
 #define SpectrumDensity_h
 
-#include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopehal/Filter.h"
-#include "../../lib/scopehal/scopehal/ComputePipeline.h"
-#include "../../lib/scopehal/scopehal/DensityFunctionWaveform.h"
+#include <scopehal/scopehal.h>
+#include <scopehal/Filter.h>
+#include <scopehal/ComputePipeline.h>
+#include <scopehal/DensityFunctionWaveform.h>
 
 /**
 	@brief Push constants for shaders/SpectrumDensityAccumulate.spv

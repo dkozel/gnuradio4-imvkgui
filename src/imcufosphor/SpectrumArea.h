@@ -14,7 +14,7 @@
 #include "ngscopeclient.h"
 #include "TextureManager.h"
 
-#include "../../lib/scopehal/scopehal/ComputePipeline.h"
+#include <scopehal/ComputePipeline.h>
 
 #include "PlotAxis.h"
 #include "SpectrumDensity.h"

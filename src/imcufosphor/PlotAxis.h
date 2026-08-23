@@ -13,7 +13,7 @@
 
 #include "ngscopeclient.h"
 
-#include "../../lib/scopehal/scopehal/Unit.h"
+#include <scopehal/Unit.h>
 
 /**
 	@brief The mapping between one axis of a plot and pixels on screen

@@ -11,9 +11,9 @@
 #ifndef SpectrumReducer_h
 #define SpectrumReducer_h
 
-#include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopehal/Filter.h"
-#include "../../lib/scopehal/scopehal/ComputePipeline.h"
+#include <scopehal/scopehal.h>
+#include <scopehal/Filter.h>
+#include <scopehal/ComputePipeline.h>
 
 /**
 	@brief Push constants for shaders/SpectrumReduce.spv

@@ -26,8 +26,8 @@
 #include <vector>
 
 //scopehal.h first: Waterfall.h is not self-contained.
-#include "../../../lib/scopehal/scopehal/scopehal.h"
-#include "../../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopehal/scopehal.h>
+#include <scopeprotocols/Waterfall.h>
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>

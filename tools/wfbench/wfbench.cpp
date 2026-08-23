@@ -20,8 +20,8 @@
 
 //scopehal.h first: Waterfall.h is not self-contained, and reaches DensityFunctionWaveform.h
 //through a relative path that assumes the umbrella has already been read.
-#include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopehal/scopehal.h>
+#include <scopeprotocols/Waterfall.h>
 
 #include "PlayerSession.h"
 #include "SigMFSource.h"

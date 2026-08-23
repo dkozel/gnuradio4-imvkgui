@@ -11,9 +11,9 @@
 #ifndef SigMFSource_h
 #define SigMFSource_h
 
-#include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopehal/Oscilloscope.h"
-#include "../../lib/scopehal/scopehal/ComplexChannel.h"
+#include <scopehal/scopehal.h>
+#include <scopehal/Oscilloscope.h>
+#include <scopehal/ComplexChannel.h>
 
 #include "sigmf_core_generated.h"
 #include "sigmf.h"

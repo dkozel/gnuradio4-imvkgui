@@ -205,6 +205,16 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/scopeprotocols")
 add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/xptools")
 add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/log")
 
+# So our own code can say <scopehal/Filter.h> and <scopeprotocols/Waterfall.h> rather than
+# counting ../ segments out to a submodule path.
+#
+# This costs nothing and changes nothing upstream: lib/scopehal already contains directories
+# literally named scopehal/, scopeprotocols/, log/ and xptools/, so putting the repo root on
+# the include path is all it takes. What it buys is that no file under src/, tools/ or
+# gr-imcufosphor/ names a submodule location any more, which is what lets the source of
+# those headers move without touching a single #include.
+target_include_directories(scopehal PUBLIC "${PROJECT_SOURCE_DIR}/lib/scopehal")
+
 # Where the submodules' glslc steps drop their .spv output. Upstream only makes these
 # findable at runtime by installing them into share/ngscopeclient; imcufosphor has no
 # install() step, so src/imcufosphor/CMakeLists.txt copies them next to the binary
@@ -272,6 +282,14 @@ add_subdirectory("${SCOPEHAL_APPS_DIR}/src/ngscopeclient/shaders" ngscopeclient-
 # check in the project was a wfbench invocation someone had to remember to type.
 include(CTest)
 enable_testing()
+
+# Cheap, no build required, and it is the thing most likely to rot silently: a new file that
+# reaches into lib/ by relative path compiles perfectly well and quietly re-couples us to a
+# submodule layout. See cmake/CheckIncludeStyle.cmake.
+add_test(NAME include-style
+	COMMAND ${CMAKE_COMMAND}
+		"-DROOTS=${PROJECT_SOURCE_DIR}/src|${PROJECT_SOURCE_DIR}/tools|${PROJECT_SOURCE_DIR}/gr-imcufosphor"
+		-P "${PROJECT_SOURCE_DIR}/cmake/CheckIncludeStyle.cmake")
 
 # Display primitives lifted from scopehal-apps, referenced in place (D4).
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/ngscopeclient-compat")

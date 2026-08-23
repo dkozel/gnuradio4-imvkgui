@@ -10,9 +10,9 @@
  */
 
 //scopehal.h first: ComplexChannel.h names its base class without declaring it
-#include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopehal/ComplexChannel.h"
-#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopehal/scopehal.h>
+#include <scopehal/ComplexChannel.h>
+#include <scopeprotocols/Waterfall.h>
 
 #include "Verify.h"
 

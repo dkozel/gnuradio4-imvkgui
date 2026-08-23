@@ -9,7 +9,7 @@
 	@brief Implementation of RecordingClock
  */
 
-#include "../../lib/scopehal/scopehal/scopehal.h"
+#include <scopehal/scopehal.h>
 
 #include "RecordingClock.h"
 

@@ -14,8 +14,8 @@
 #include "ngscopeclient.h"
 #include "TextureManager.h"
 
-#include "../../lib/scopehal/scopehal/ComputePipeline.h"
-#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopehal/ComputePipeline.h>
+#include <scopeprotocols/Waterfall.h>
 
 #include "PlotAxis.h"
 #include "RecordingClock.h"

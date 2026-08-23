@@ -11,8 +11,8 @@
 	question about correctness belongs. See DESIGN.md for the architecture.
  */
 
-#include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopehal/scopehal.h>
+#include <scopeprotocols/Waterfall.h>
 
 #include "ComplexFFTFilter.h"
 #include "MainWindow.h"

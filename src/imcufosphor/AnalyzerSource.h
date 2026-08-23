@@ -14,7 +14,7 @@
 #include "RowHistory.h"
 #include "SpectrumDensity.h"
 
-#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopeprotocols/Waterfall.h>
 
 /**
 	@brief Where playback time goes, accumulated since the last ResetStats()

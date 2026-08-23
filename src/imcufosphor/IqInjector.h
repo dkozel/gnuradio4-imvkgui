@@ -13,7 +13,7 @@
 
 #include "PackedIQWaveform.h"
 
-#include "../../lib/scopehal/scopehal/ComplexChannel.h"
+#include <scopehal/ComplexChannel.h>
 
 #include <bit>
 #include <complex>

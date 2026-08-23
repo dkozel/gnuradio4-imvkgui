@@ -11,7 +11,7 @@
 #ifndef GpuTimer_h
 #define GpuTimer_h
 
-#include "../../lib/scopehal/scopehal/scopehal.h"
+#include <scopehal/scopehal.h>
 
 #include <string>
 #include <vector>

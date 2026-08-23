@@ -19,7 +19,7 @@
 #include "GpuTimer.h"
 #include "RowHistory.h"
 
-#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
+#include <scopeprotocols/Waterfall.h>
 
 //PlaybackStats and BlockSpan moved to AnalyzerSource.h, which SpectrumEngine shares. Included
 //above rather than forward declared, so every existing user of this header still sees them.
