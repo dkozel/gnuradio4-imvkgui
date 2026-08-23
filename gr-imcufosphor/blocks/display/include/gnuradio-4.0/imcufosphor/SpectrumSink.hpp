@@ -282,15 +282,15 @@ protected:
 			_area->SetTraceVisible(i, (trace_mask & (1U << i)) != 0);
 	}
 
-	static FFTFilter::WindowFunction WindowFromName(const std::string& name)
+	static WindowFunction WindowFromName(const std::string& name)
 	{
 		if(name == "rectangular")
-			return FFTFilter::WINDOW_RECTANGULAR;
+			return WINDOW_RECTANGULAR;
 		if(name == "hamming")
-			return FFTFilter::WINDOW_HAMMING;
+			return WINDOW_HAMMING;
 		if(name == "hann")
-			return FFTFilter::WINDOW_HANN;
-		return FFTFilter::WINDOW_BLACKMAN_HARRIS;
+			return WINDOW_HANN;
+		return WINDOW_BLACKMAN_HARRIS;
 	}
 };
 

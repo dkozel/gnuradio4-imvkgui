@@ -16,7 +16,8 @@
 
 #include <gnuradio-4.0/BlockModel.hpp>
 
-#include "VulkanWindowCompat.h"
+#include "VulkanWindow.h"
+#include "TextureManager.h"
 
 /**
 	@brief The window a GNU Radio flowgraph's display blocks draw into

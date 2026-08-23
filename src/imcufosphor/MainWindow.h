@@ -11,7 +11,8 @@
 #ifndef MainWindow_h
 #define MainWindow_h
 
-#include "VulkanWindowCompat.h"
+#include "VulkanWindow.h"
+#include "TextureManager.h"
 
 #include "AnalyzerPane.h"
 #include "PlayerSession.h"

@@ -11,7 +11,7 @@
 #ifndef PlotAxis_h
 #define PlotAxis_h
 
-#include "ImGuiCompat.h"
+#include <imgui.h>
 
 #include <scopehal/Unit.h>
 

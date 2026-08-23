@@ -33,91 +33,21 @@
 	@brief Implementation of global functions
  */
 #include "scopehal.h"
-#include "scopehal-version.h"
 #include <libgen.h>
 #include <filesystem>
 
-#include "AgilentOscilloscope.h"
-#include "AlientekPowerSupply.h"
-#include "HP662xAPowerSupply.h"
-#include "AntikernelLabsGPIO.h"
-#include "AntikernelLabsILA.h"
-#include "AntikernelLabsSerdesILA8b10b.h"
-#include "AntikernelLabsVIO.h"
-#include "DemoOscilloscope.h"
-#include "DemoPowerSupply.h"
-#include "DigilentOscilloscope.h"
-#include "DSLabsOscilloscope.h"
-#include "KeysightDCA.h"
-#include "LeCroyOscilloscope.h"
-#include "LeCroyFWPOscilloscope.h"
-#include "MagnovaOscilloscope.h"
-#include "PicoOscilloscope.h"
-#include "RigolOscilloscope.h"
-#include "RohdeSchwarzOscilloscope.h"
-#include "RSRTB2kOscilloscope.h"
-#include "RSRTO6Oscilloscope.h"
-#include "SCPIPowerSupply.h"
-#include "SiglentSCPIOscilloscope.h"
-#include "TektronixOscilloscope.h"
-#include "TektronixHSIOscilloscope.h"
-#include "ThunderScopeOscilloscope.h"
-#include "HaasoscopePro.h"
-#include "TinySA.h"
 
-#include "AntikernelLabsTriggerCrossbar.h"
-#include "MultiLaneBERT.h"
 
-#include "CSVStreamInstrument.h"
-#include "SocketCANAnalyzer.h"
 
-#include "OwonXDMMultimeter.h"
-#include "RohdeSchwarzHMC8012Multimeter.h"
-#include "AgilentMultimeter.h"
 
-#include "OwonXDGFunctionGenerator.h"
-#include "SiglentFunctionGenerator.h"
-#include "RigolFunctionGenerator.h"
 
-#include "GWInstekGPDX303SPowerSupply.h"
-#include "RigolDP8xxPowerSupply.h"
-#include "RohdeSchwarzHMC804xPowerSupply.h"
-#include "SiglentPowerSupply.h"
-#include "RidenPowerSupply.h"
-#include "SinilinkPowerSupply.h"
-#include "KuaiquPowerSupply.h"
 
-#include "SiglentLoad.h"
 
-#include "AseqSpectrometer.h"
 
-#include "UHDBridgeSDR.h"
 
-#include "CopperMountainVNA.h"
-#include "NanoVNA.h"
-#include "PicoVNA.h"
 
-#include "SiglentVectorSignalGenerator.h"
 
-#include "CDR8B10BTrigger.h"
-#include "CDRNRZPatternTrigger.h"
-#include "DCAEdgeTrigger.h"
-#include "DropoutTrigger.h"
-#include "EdgeTrigger.h"
-#include "GlitchTrigger.h"
-#include "LineTrigger.h"
-#include "NthEdgeBurstTrigger.h"
-#include "PulseWidthTrigger.h"
-#include "RuntTrigger.h"
-#include "SlewRateTrigger.h"
-#include "UartTrigger.h"
-#include "WindowTrigger.h"
 
-#include "RSRTB2kRiseTimeTrigger.h"
-#include "RSRTB2kRuntTrigger.h"
-#include "RSRTB2kTimeoutTrigger.h"
-#include "RSRTB2kVideoTrigger.h"
-#include "RSRTB2kWidthTrigger.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -218,32 +148,6 @@ set<MemoryPressureHandler> g_memoryPressureHandlers;
  */
 shared_mutex g_vulkanActivityMutex;
 
-/**
-	@brief Static initialization for SCPI transports
- */
-void TransportStaticInit()
-{
-	AddTransportClass(SCPISocketTransport);
-#if !defined(_WIN32) && !defined(__APPLE__)
-// TMC is only supported on Linux for now
-// https://github.com/glscopeclient/scopehal/issues/519
-	AddTransportClass(SCPITMCTransport);
-#endif
-	AddTransportClass(SCPITwinLanTransport);
-	AddTransportClass(SCPIUARTTransport);
-	AddTransportClass(SCPIHIDTransport);
-	AddTransportClass(SCPINullTransport);
-	AddTransportClass(VICPSocketTransport);
-
-	//SocketCAN is a Linux-specific feature
-#ifdef __linux
-	AddTransportClass(SCPISocketCANTransport);
-#endif
-
-#ifdef HAS_LXI
-	AddTransportClass(SCPILxiTransport);
-#endif
-}
 
 /**
 	@brief Static initialization for CPU feature flags
@@ -282,103 +186,30 @@ void DetectCPUFeatures()
 #endif /* __x86_64__ */
 }
 
+/**
+	@brief Initialization scopehal needs before anything else runs
+
+	Was DriverStaticInit(). These three lines were its first three; the other ~85 were
+	AddDriverClass / AddBERTDriverClass / AddPowerSupplyDriverClass calls for instruments this
+	project does not open, and they were the single edge that pulled 137 of scopehal's 175
+	translation units into the link.
+
+	InitializeSearchPaths() is what makes FindDataFile() resolve shaders/*.spv next to the
+	binary. DetectCPUFeatures() sets the g_has* flags that inline code in these headers reads.
+	Unit::InitializeLocales() is required before any PrettyPrint().
+ */
+void ScopehalStaticInit()
+{
+	InitializeSearchPaths();
+	DetectCPUFeatures();
+	Unit::InitializeLocales();
+}
+
 void ScopehalStaticCleanup()
 {
 	VulkanCleanup();
 }
 
-/**
-	@brief Static initialization for instrument drivers
- */
-void DriverStaticInit()
-{
-	InitializeSearchPaths();
-	DetectCPUFeatures();
-	Unit::InitializeLocales();
-
-	AddBERTDriverClass(AntikernelLabsTriggerCrossbar);
-	AddBERTDriverClass(MultiLaneBERT);
-
-	AddDriverClass(AgilentOscilloscope);
-	AddDriverClass(AntikernelLabsILA);
-	AddDriverClass(AntikernelLabsSerdesILA8b10b);
-	AddDriverClass(DemoOscilloscope);
-	AddDriverClass(DigilentOscilloscope);
-	AddDriverClass(DSLabsOscilloscope);
-	AddDriverClass(HaasoscopePro);
-	AddDriverClass(KeysightDCA);
-	AddDriverClass(PicoOscilloscope);
-	AddDriverClass(RigolOscilloscope);
-	AddDriverClass(RohdeSchwarzOscilloscope);
-	AddDriverClass(RSRTB2kOscilloscope);
-	AddDriverClass(RSRTO6Oscilloscope);
-	AddDriverClass(LeCroyOscilloscope);
-	AddDriverClass(LeCroyFWPOscilloscope);
-	AddDriverClass(MagnovaOscilloscope);
-	AddDriverClass(SiglentSCPIOscilloscope);
-	AddDriverClass(TektronixOscilloscope);
-	AddDriverClass(TektronixHSIOscilloscope);
-	AddDriverClass(ThunderScopeOscilloscope);
-	AddDriverClass(TinySA);
-#ifdef __linux
-	AddDriverClass(SocketCANAnalyzer);
-#endif
-
-	AddFunctionGeneratorDriverClass(OwonXDGFunctionGenerator);
-	AddFunctionGeneratorDriverClass(RigolFunctionGenerator);
-	AddFunctionGeneratorDriverClass(SiglentFunctionGenerator);
-
-	AddLoadDriverClass(SiglentLoad);
-
-	AddMiscInstrumentDriverClass(AntikernelLabsGPIO);
-	AddMiscInstrumentDriverClass(AntikernelLabsVIO);
-	AddMiscInstrumentDriverClass(CSVStreamInstrument);
-
-	AddMultimeterDriverClass(AgilentMultimeter);
-	AddMultimeterDriverClass(OwonXDMMultimeter);
-	AddMultimeterDriverClass(RohdeSchwarzHMC8012Multimeter);
-
-	AddPowerSupplyDriverClass(DemoPowerSupply);
-	AddPowerSupplyDriverClass(GWInstekGPDX303SPowerSupply);
-	AddPowerSupplyDriverClass(RigolDP8xxPowerSupply);
-	AddPowerSupplyDriverClass(RohdeSchwarzHMC804xPowerSupply);
-	AddPowerSupplyDriverClass(SiglentPowerSupply);
-	AddPowerSupplyDriverClass(HP662xAPowerSupply);
-	AddPowerSupplyDriverClass(AlientekPowerSupply);
-	AddPowerSupplyDriverClass(RidenPowerSupply);
-	AddPowerSupplyDriverClass(SinilinkPowerSupply);
-	AddPowerSupplyDriverClass(KuaiquPowerSupply);
-
-	AddRFSignalGeneratorDriverClass(SiglentVectorSignalGenerator);
-
-	AddSpectrometerDriverClass(AseqSpectrometer);
-
-	AddSDRDriverClass(UHDBridgeSDR);
-
-	AddVNADriverClass(CopperMountainVNA);
-	AddVNADriverClass(NanoVNA);
-	AddVNADriverClass(PicoVNA);
-
-	AddTriggerClass(CDR8B10BTrigger);
-	AddTriggerClass(CDRNRZPatternTrigger);
-	AddTriggerClass(DCAEdgeTrigger);
-	AddTriggerClass(DropoutTrigger);
-	AddTriggerClass(EdgeTrigger);
-	AddTriggerClass(GlitchTrigger);
-	AddTriggerClass(LineTrigger);
-	AddTriggerClass(NthEdgeBurstTrigger);
-	AddTriggerClass(PulseWidthTrigger);
-	AddTriggerClass(RuntTrigger);
-	AddTriggerClass(SlewRateTrigger);
-	AddTriggerClass(UartTrigger);
-	AddTriggerClass(WindowTrigger);
-/*
-	AddTriggerClass(RSRTB2kRiseTimeTrigger);
-	AddTriggerClass(RSRTB2kRuntTrigger);
-	AddTriggerClass(RSRTB2kTimeoutTrigger);
-	AddTriggerClass(RSRTB2kVideoTrigger);
-	AddTriggerClass(RSRTB2kWidthTrigger);*/
-}
 
 string GetDefaultChannelColor(int i)
 {
@@ -415,169 +246,6 @@ uint64_t ConvertVectorSignalToScalar(const vector<bool>& bits)
 }
 
 /**
-	@brief Initialize all plugins
- */
-void InitializePlugins()
-{
-#ifndef _WIN32
-	char tmp[1024];
-	vector<string> search_dirs;
-	search_dirs.push_back("/usr/lib/scopehal/plugins/");
-	search_dirs.push_back("/usr/local/lib/scopehal/plugins/");
-
-	//current binary dir
-	string binDir = GetDirOfCurrentExecutable();
-	if ( !binDir.empty() )
-	{
-		//If the binary directory is under /usr, do *not* search it!
-		//We're probably in /usr/bin and we really do not want to be dlopen-ing every single thing in there.
-		//See https://github.com/azonenberg/scopehal-apps/issues/393
-		if(binDir.find("/usr") != 0)
-			search_dirs.push_back(binDir);
-	}
-
-	//Home directory
-	snprintf(tmp, sizeof(tmp), "%s/.scopehal/plugins", getenv("HOME"));
-	search_dirs.push_back(tmp);
-
-	for(auto& dir : search_dirs)
-	{
-		DIR* hdir = opendir(dir.c_str());
-		LogDebug("Searching for plugins in %s\n", dir.c_str());
-		LogIndenter li;
-		if(!hdir)
-			continue;
-
-		dirent* pent;
-		while((pent = readdir(hdir)))
-		{
-			//Don't load hidden files or parent directory entries
-			if(pent->d_name[0] == '.')
-				continue;
-
-			// Don't load directories
-			if(pent->d_type == DT_DIR)
-				continue;
-
-			//Try loading it and see if it works.
-			//(for now, never unload the plugins)
-			string fname = dir + "/" + pent->d_name;
-			void* hlib = dlopen(fname.c_str(), RTLD_NOW);
-			if(hlib == nullptr)
-				continue;
-			LogDebug("Checking %s\n", fname.c_str());
-			LogIndenter li2;
-
-			//If loaded, look for PluginInit()
-			typedef void (*PluginInit)();
-			PluginInit init = (PluginInit)dlsym(hlib, "PluginInit");
-			if(!init)
-			{
-				LogDebug("PluginInit not found, skipping\n");
-				continue;
-			}
-
-			//If found, it's a valid plugin
-			LogDebug("Loading plugin %s\n", fname.c_str());
-			init();
-		}
-
-		closedir(hdir);
-	}
-#else
-	// Get path of process image
-	TCHAR binPath[MAX_PATH];
-
-	if( GetModuleFileName(NULL, binPath, MAX_PATH) == 0 )
-	{
-		LogError("Error: GetModuleFileName() failed.\n");
-		return;
-	}
-
-	// Remove file name from path
-	if( !PathRemoveFileSpec(binPath) )
-	{
-		LogError("Error: PathRemoveFileSpec() failed.\n");
-		return;
-	}
-
-	TCHAR searchPath[MAX_PATH];
-	if( PathCombine(searchPath, binPath, "plugins\\*.dll") == NULL )
-	{
-		LogError("Error: PathCombine() failed.\n");
-		return;
-	}
-
-	// For now, we only search in the folder that contains the binary.
-	WIN32_FIND_DATA findData;
-	HANDLE findHandle = INVALID_HANDLE_VALUE;
-
-	// First file entry
-	findHandle = FindFirstFile(searchPath, &findData);
-
-	// Is there at least one file?
-	if(findHandle == INVALID_HANDLE_VALUE)
-	{
-		return;
-	}
-
-	do
-	{
-		// Exclude directories
-		if(!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-		{
-			auto fileName = findData.cFileName;
-			auto fileNameCStr = reinterpret_cast<const char*>(fileName);
-
-			// The file name does not contain the full path, which poses a problem since the file is
-			// located in the plugins subdirectory
-			TCHAR filePath[MAX_PATH];
-
-			if( PathCombine(filePath, "plugins", fileName) == NULL )
-			{
-				LogError("Error: PathCombine() failed.\n");
-				return;
-			}
-
-			// Try to open it as a library
-			auto module = LoadLibrary(filePath);
-
-			if(module != NULL)
-			{
-				// Try to retrieve plugin entry point address
-				auto procAddr = GetProcAddress(module, "PluginInit");
-
-				if(procAddr != NULL)
-				{
-					typedef void (*PluginInit)();
-					auto proc = reinterpret_cast<PluginInit>(procAddr);
-					proc();
-				}
-				else
-				{
-					LogWarning("Warning: Found plugin %s, but has no init symbol\n", fileNameCStr);
-					FreeLibrary(module);
-				}
-			}
-			else
-			{
-				LogWarning("Warning: Found plugin %s, but isn't valid library\n", fileNameCStr);
-			}
-		}
-	}
-	while(0 != FindNextFile(findHandle, &findData));
-
-	auto error = GetLastError();
-
-	if(error != ERROR_NO_MORE_FILES)
-	{
-		LogError("Error: Enumeration of plugin files failed.\n");
-	}
-
-	FindClose(findHandle);
-
-#endif
-}
 
 /**
 	@brief Removes whitespace from the start and end of a string
@@ -1113,7 +781,10 @@ uint32_t CRC32(const vector<uint8_t>& bytes)
  */
 const char* ScopehalGetVersion()
 {
-	return SCOPEHAL_VERSION;
+	//Was a configure_file()-generated scopehal-version.h holding `git describe` output for the
+	//scopehal repository. There is no such repository here any more; THIRD_PARTY.md records the
+	//commit this was vendored from.
+	return "v0.2.2 (vendored)";
 }
 
 /**

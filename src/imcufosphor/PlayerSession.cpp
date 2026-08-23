@@ -37,7 +37,7 @@ PlayerSession::PlayerSession(SigMFSource* source, shared_ptr<QueueHandle> queue)
 	m_fft->SetInput("I", StreamDescriptor(chan, 0));
 	m_fft->SetInput("Q", StreamDescriptor(chan, 1));
 	m_fft->SetInput("center", StreamDescriptor(chan, 2));
-	m_fft->SetWindowFunction(FFTFilter::WINDOW_BLACKMAN_HARRIS);
+	m_fft->SetWindowFunction(WINDOW_BLACKMAN_HARRIS);
 
 	m_reducer = new SpectrumReducer("#ffffff");
 	m_reducer->AddRef();

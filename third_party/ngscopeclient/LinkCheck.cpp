@@ -21,9 +21,9 @@
 	See notes/R2-lifted-primitives.md.
  */
 
-#include "VulkanWindowCompat.h"
-#include "PreferenceManager.h"
-#include "PreferenceTypes.h"
+#include "VulkanWindow.h"
+#include "TextureManager.h"
+#include "WindowGeometry.h"
 
 using namespace std;
 
@@ -50,40 +50,6 @@ protected:
 };
 
 /**
-	@brief Reads back every preference VulkanWindow will ask for.
-
-	PreferenceCategory::GetLeaf() throws on an unknown path, so this is the cheap way to
-	find out whether our replacement schema is complete before a window ever opens.
- */
-static bool CheckPreferenceSchema()
-{
-	auto& prefs = PreferenceManager::GetPreferences();
-
-	try
-	{
-		prefs.GetEnumRaw("Appearance.Windowing.startup_mode");
-
-		prefs.GetInt("Appearance.Startup.startup_size_width");
-		prefs.GetInt("Appearance.Startup.startup_size_heigth");
-		prefs.GetInt("Appearance.Startup.startup_pos_x");
-		prefs.GetInt("Appearance.Startup.startup_pos_y");
-		prefs.GetString("Appearance.Startup.monitor_name");
-		prefs.GetInt("Appearance.Startup.monitor_width");
-		prefs.GetInt("Appearance.Startup.monitor_heigth");
-		prefs.GetBool("Appearance.Startup.startup_fullscreen");
-		prefs.GetBool("Appearance.Startup.startup_maximized");
-	}
-	catch(const exception& ex)
-	{
-		LogError("Preference schema is incomplete: %s\n", ex.what());
-		return false;
-	}
-
-	LogNotice("Preference schema ok, config directory is %s\n", prefs.GetConfigDirectory().c_str());
-	return true;
-}
-
-/**
 	@brief Actually opens a window. Only reached with --window.
  */
 static bool RunWindowSmokeTest()
@@ -100,7 +66,8 @@ static bool RunWindowSmokeTest()
 	TextureManager textures(queue);
 	LinkCheckWindow window(queue);
 	window.Render();
-	window.SaveWindowPositionAndSize();
+	WindowGeometry geometry;
+	window.SaveWindowPositionAndSize(geometry);
 
 	//Deliberately not calling window.GetContentScale(). VulkanWindow.h:54 declares it but no
 	//translation unit in scopehal-apps defines it - ngscopeclient never calls it, so upstream
@@ -145,7 +112,6 @@ int main(int argc, char* argv[])
 	LogNotice("VulkanWindow::Render and TextureManager::LoadTexture resolved (%d, %d)\n",
 		pRender != nullptr, pLoad != nullptr);
 
-	if(!CheckPreferenceSchema())
 		return 1;
 
 	if(doWindow)

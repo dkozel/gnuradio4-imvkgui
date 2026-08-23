@@ -11,7 +11,7 @@
 #ifndef RenderHost_h
 #define RenderHost_h
 
-#include "TextureCompat.h"
+#include "TextureManager.h"
 
 #include <atomic>
 #include <memory>

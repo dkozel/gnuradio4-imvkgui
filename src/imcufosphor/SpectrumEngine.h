@@ -63,7 +63,7 @@ struct EngineConfig
 	///@brief Spectra combined into each waterfall row
 	int64_t groupSize = 1;
 
-	FFTFilter::WindowFunction window = FFTFilter::WINDOW_BLACKMAN_HARRIS;
+	WindowFunction window = WINDOW_BLACKMAN_HARRIS;
 
 	///@brief dBm at the bottom and top of the colour scale
 	float rangeMin = -100;

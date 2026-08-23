@@ -54,14 +54,14 @@ public:
 	friend class MockOscilloscope;
 
 	OscilloscopeChannel(
-		Oscilloscope* scope,
+		Instrument* scope,
 		const std::string& hwname,
 		const std::string& color,
 		Unit xunit = Unit(Unit::UNIT_FS),
 		size_t index = 0);
 
 	OscilloscopeChannel(
-		Oscilloscope* scope,
+		Instrument* scope,
 		const std::string& hwname,
 		const std::string& color,
 		Unit xunit = Unit(Unit::UNIT_FS),
@@ -70,8 +70,9 @@ public:
 		size_t index = 0);
 	virtual ~OscilloscopeChannel();
 
-	//implemented in Oscilloscope.h
-	Oscilloscope* GetScope();
+	//GetScope() used to be declared here and defined inline in Oscilloscope.h, as a
+	//dynamic_cast of the owning instrument. Every channel in this project has a null
+	//instrument, so it had no callers left once the pass-through accessors were collapsed.
 
 	size_t GetRefCount()
 	{ return m_refcount; }

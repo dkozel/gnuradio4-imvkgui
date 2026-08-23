@@ -195,34 +195,23 @@ if(NOT WIN32)
 endif()
 
 ########################################################################
-# Submodules
+# Vendored upstream code
 ########################################################################
 
-# scopehal, built unmodified. Note these are subdirectories of the scopehal
-# repo, which is itself the lib/scopehal submodule.
-add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/scopehal")
-add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/scopeprotocols")
-add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/xptools")
-add_subdirectory("${PROJECT_SOURCE_DIR}/lib/scopehal/log")
-
-# So our own code can say <scopehal/Filter.h> and <scopeprotocols/Waterfall.h> rather than
-# counting ../ segments out to a submodule path.
+# scopehal, vendored into third_party/ rather than built from a submodule.
 #
-# This costs nothing and changes nothing upstream: lib/scopehal already contains directories
-# literally named scopehal/, scopeprotocols/, log/ and xptools/, so putting the repo root on
-# the include path is all it takes. What it buys is that no file under src/, tools/ or
-# gr-imcufosphor/ names a submodule location any more, which is what lets the source of
-# those headers move without touching a single #include.
-target_include_directories(scopehal PUBLIC "${PROJECT_SOURCE_DIR}/lib/scopehal")
+# What is there and why is recorded in THIRD_PARTY.md and in that directory's CMakeLists.
+# The <scopehal/Filter.h> / <scopeprotocols/Waterfall.h> include style our code uses is
+# unchanged - the vendored tree keeps upstream's directory shape precisely so that neither
+# our includes nor scopehal's own internal relative ones had to move.
+add_subdirectory("${PROJECT_SOURCE_DIR}/third_party/scopehal")
 
-# Where the submodules' glslc steps drop their .spv output. Upstream only makes these
-# findable at runtime by installing them into share/ngscopeclient; imcufosphor has no
-# install() step, so src/imcufosphor/CMakeLists.txt copies them next to the binary
-# instead. Kept here, next to the add_subdirectory() calls that determine these paths.
-# Pipe separated rather than semicolon separated so the list survives being passed to
-# cmake -P as a single -D argument. See cmake/CollectShaders.cmake.
+# Where the glslc steps drop their .spv output. There is no install() in this project, so
+# cmake/RuntimeData.cmake copies them next to each binary instead. Pipe separated rather than
+# semicolon separated so the list survives being passed to cmake -P as a single -D argument;
+# see cmake/CollectShaders.cmake.
 set(IMCUFOSPHOR_SHADER_SOURCE_DIRS
-	"${PROJECT_BINARY_DIR}/lib/scopehal/scopehal/shaders|${PROJECT_BINARY_DIR}/lib/scopehal/scopeprotocols/shaders|${PROJECT_BINARY_DIR}/ngscopeclient-shaders")
+	"${PROJECT_BINARY_DIR}/third_party/scopehal/shaders|${PROJECT_BINARY_DIR}/third_party/ngscopeclient/shaders")
 
 # Where our own glslc step drops its output. Named here rather than in
 # src/imcufosphor/CMakeLists.txt because tools/ needs it too and is a sibling, not a child.
@@ -250,50 +239,9 @@ if(LIBSIGMF_INTERFACE_INCLUDES)
 		INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${LIBSIGMF_INTERFACE_INCLUDES}")
 endif()
 
-# lib/scopehal-apps is intentionally NOT added as a subdirectory. It is a source
-# donor: src/imcufosphor/CMakeLists.txt names individual files from it. See
-# DESIGN.md section 5.
-set(SCOPEHAL_APPS_DIR "${PROJECT_SOURCE_DIR}/lib/scopehal-apps" CACHE PATH
-	"Path to the scopehal-apps source donor tree")
 
-# ngscopeclient's own compute shaders: the tone mappers (WaterfallToneMap, WaveformToneMap,
-# EyeToneMap...) and the sixteen waveform-compute rasterizer variants.
-#
-# Referenced in place rather than copied (D4). Upstream's shaders/CMakeLists.txt is
-# self-contained - its only external dependency is Vulkan_GLSLC_EXECUTABLE, which we already
-# have - so add_subdirectory() over it works with no change to the submodule. It defines the
-# targets ngcomputeshaders and ngrendershaders.
-# Upstream's shaders/CMakeLists.txt ends with add_dependencies(ngscopeclient ...), which
-# assumes the application target exists. We do not build ngscopeclient, so provide an empty
-# target with that name purely to satisfy the call: it builds nothing, and our own target
-# depends on ngcomputeshaders/ngrendershaders directly. Deleting that line from the
-# submodule would violate D4 for no benefit.
-add_custom_target(ngscopeclient)
-
-add_subdirectory("${SCOPEHAL_APPS_DIR}/src/ngscopeclient/shaders" ngscopeclient-shaders)
-
-########################################################################
-# Application
-########################################################################
-
-# Testing is enabled unconditionally, and ahead of every directory that registers a test.
-#
-# It used to live inside the BUILD_GR4_BLOCKS block below, which meant the default build
-# configuration had no tests at all - not a short suite, none - and the only correctness
-# check in the project was a wfbench invocation someone had to remember to type.
-include(CTest)
-enable_testing()
-
-# Cheap, no build required, and it is the thing most likely to rot silently: a new file that
-# reaches into lib/ by relative path compiles perfectly well and quietly re-couples us to a
-# submodule layout. See cmake/CheckIncludeStyle.cmake.
-add_test(NAME include-style
-	COMMAND ${CMAKE_COMMAND}
-		"-DROOTS=${PROJECT_SOURCE_DIR}/src|${PROJECT_SOURCE_DIR}/tools|${PROJECT_SOURCE_DIR}/gr-imcufosphor"
-		-P "${PROJECT_SOURCE_DIR}/cmake/CheckIncludeStyle.cmake")
-
-# Display primitives lifted from scopehal-apps, referenced in place (D4).
-add_subdirectory("${PROJECT_SOURCE_DIR}/src/ngscopeclient-compat")
+# Display primitives vendored from ngscopeclient, plus ImGui.
+add_subdirectory("${PROJECT_SOURCE_DIR}/third_party/ngscopeclient")
 
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/imcufosphor")
 
@@ -315,8 +263,7 @@ if(BUILD_GR4_BLOCKS)
 	add_subdirectory("${PROJECT_SOURCE_DIR}/gr-imcufosphor")
 endif()
 
-# Make sure all of the scopehal shared libraries are built relocatable
-set_property(TARGET scopehal PROPERTY POSITION_INDEPENDENT_CODE ON)
-set_property(TARGET scopeprotocols PROPERTY POSITION_INDEPENDENT_CODE ON)
-set_property(TARGET xptools PROPERTY POSITION_INDEPENDENT_CODE ON)
-set_property(TARGET log PROPERTY POSITION_INDEPENDENT_CODE ON)
+# scopeprotocols, xptools and log were separate libraries built from the submodule. What we
+# use of them - Waterfall.cpp, TimeUtil.cpp, log.cpp and ColoredSTDLogSink.cpp - is four
+# files, so they are compiled into the vendored scopehal target rather than kept as three
+# more libraries. POSITION_INDEPENDENT_CODE for it is set in third_party/scopehal.

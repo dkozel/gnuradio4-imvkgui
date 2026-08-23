@@ -11,7 +11,7 @@
 #ifndef WaterfallArea_h
 #define WaterfallArea_h
 
-#include "TextureCompat.h"
+#include "TextureManager.h"
 
 #include <scopehal/ComputePipeline.h>
 #include <scopeprotocols/Waterfall.h>

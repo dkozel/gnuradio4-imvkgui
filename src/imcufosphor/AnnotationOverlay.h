@@ -11,7 +11,7 @@
 #ifndef AnnotationOverlay_h
 #define AnnotationOverlay_h
 
-#include "ImGuiCompat.h"
+#include <imgui.h>
 
 #include "Annotation.h"
 #include "PlayerSession.h"

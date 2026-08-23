@@ -35,7 +35,26 @@
 #ifndef VulkanWindow_h
 #define VulkanWindow_h
 
+//Upstream this header had no #include directives at all and relied on its includer having
+//read ngscopeclient.h first, which is why every file that wanted a window also got
+//ngscopeclient's instrument-session model. These are what it actually names.
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
+#include <scopehal/scopehal.h>
+
+//ImGuiContext, and the two backends this drives
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_vulkan.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+
 class Texture;
+class WindowGeometry;
 
 /**
 	@brief A GLFW window containing a Vulkan surface
@@ -64,7 +83,7 @@ public:
 	bool IsFullscreen()
 	{ return m_fullscreen; }
 
-	void SaveWindowPositionAndSize();
+	void SaveWindowPositionAndSize(WindowGeometry& geometry);
 
 protected:
 	bool UpdateFramebuffer();

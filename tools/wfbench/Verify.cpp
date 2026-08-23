@@ -181,7 +181,7 @@ bool VerifyComplexFFTFilter()
 	filt->SetInput("center", StreamDescriptor(chan.get(), 2));
 
 	//Rectangular so the coherent gain correction is unity and the amplitude check is exact
-	filt->SetWindowFunction(FFTFilter::WINDOW_RECTANGULAR);
+	filt->SetWindowFunction(WINDOW_RECTANGULAR);
 
 	//Compute queue and command buffer, as FilterGraphExecutor.cpp:547-554 sets up
 	shared_ptr<QueueHandle> queue(
@@ -217,11 +217,11 @@ bool VerifyComplexFFTFilter()
 	}
 
 	//Sanity check that the other windows run and still find the tone in the right bin
-	struct { FFTFilter::WindowFunction w; const char* name; } windows[] =
+	struct { WindowFunction w; const char* name; } windows[] =
 	{
-		{ FFTFilter::WINDOW_HAMMING,			"Hamming" },
-		{ FFTFilter::WINDOW_HANN,				"Hann" },
-		{ FFTFilter::WINDOW_BLACKMAN_HARRIS,	"Blackman-Harris" }
+		{ WINDOW_HAMMING,			"Hamming" },
+		{ WINDOW_HANN,				"Hann" },
+		{ WINDOW_BLACKMAN_HARRIS,	"Blackman-Harris" }
 	};
 	for(auto& wf : windows)
 	{
@@ -480,7 +480,7 @@ bool VerifyPackedIQPath()
 	filt->SetInput("I", StreamDescriptor(chan.get(), 0));
 	filt->SetInput("Q", StreamDescriptor(chan.get(), 1));
 	filt->SetInput("center", StreamDescriptor(chan.get(), 2));
-	filt->SetWindowFunction(FFTFilter::WINDOW_RECTANGULAR);
+	filt->SetWindowFunction(WINDOW_RECTANGULAR);
 
 	shared_ptr<QueueHandle> queue(
 		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "PackedIQPathTest"));
@@ -545,11 +545,11 @@ bool VerifyPackedIQPath()
 	//Blackman-Harris is deliberately excluded: the packed shader evaluates its fourth term at
 	//cos(3x) and scopeprotocols' ComplexBlackmanHarrisWindow.glsl:94 evaluates it at cos(6x),
 	//so the two windows are genuinely different shapes. See ComplexFFTFilter::Refresh().
-	struct { FFTFilter::WindowFunction w; const char* name; } windows[] =
+	struct { WindowFunction w; const char* name; } windows[] =
 	{
-		{ FFTFilter::WINDOW_RECTANGULAR,	"Rectangular" },
-		{ FFTFilter::WINDOW_HAMMING,		"Hamming" },
-		{ FFTFilter::WINDOW_HANN,			"Hann" }
+		{ WINDOW_RECTANGULAR,	"Rectangular" },
+		{ WINDOW_HAMMING,		"Hamming" },
+		{ WINDOW_HANN,			"Hann" }
 	};
 	//A half-bin offset rather than an exact one. On an exact bin the window transform is
 	//sampled at its own nulls, so every bin but the tone's is numerical noise and there is
@@ -673,7 +673,7 @@ static bool SpectrumPeakOfRecording(
 	filt->SetInput("I", StreamDescriptor(chan, 0));
 	filt->SetInput("Q", StreamDescriptor(chan, 1));
 	filt->SetInput("center", StreamDescriptor(chan, 2));
-	filt->SetWindowFunction(FFTFilter::WINDOW_BLACKMAN_HARRIS);
+	filt->SetWindowFunction(WINDOW_BLACKMAN_HARRIS);
 
 	shared_ptr<QueueHandle> queue(
 		g_vkQueueManager->GetQueueFromPool(QueueManager::QUEUE_POOL_FILTER, "SigMFSourceTest"));
@@ -1405,7 +1405,7 @@ bool VerifySpectrumEngine()
 	cfg.fftLength = npoints;
 	cfg.blockSize = npoints * nblocks;
 	cfg.groupSize = 1;
-	cfg.window = FFTFilter::WINDOW_RECTANGULAR;
+	cfg.window = WINDOW_RECTANGULAR;
 	cfg.sampleRate = fs;
 	cfg.centerFrequency = centerHz;
 	engine.Configure(cfg);

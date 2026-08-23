@@ -33,12 +33,13 @@
 	@brief Implementation of VulkanWindow
  */
 
-#include "ngscopeclient.h"
+//VulkanFFTPlan.h used to be included here and no symbol from it was ever used.
 #include "TextureManager.h"
 #include "VulkanWindow.h"
-#include "VulkanFFTPlan.h"
-#include "PreferenceManager.h"
-#include "PreferenceTypes.h"
+
+//g_pipelineCacheMgr, for the ImGui pipeline cache
+#include <scopehal/PipelineCacheManager.h>
+#include "WindowGeometry.h"
 
 using namespace std;
 
@@ -131,7 +132,8 @@ VulkanWindow::VulkanWindow(const string& title, shared_ptr<QueueHandle> queue, b
 	bool maximized = false;
 	bool restored = false;
 	bool windowed = false;
-	PreferenceManager& preferences = PreferenceManager::GetPreferences();
+	//Was PreferenceManager::GetPreferences(). See WindowGeometry.h for what that cost.
+	WindowGeometry geometry;
 	// Priority to command line arguments
 	if(maximize)
 	{
@@ -143,16 +145,15 @@ VulkanWindow::VulkanWindow(const string& title, shared_ptr<QueueHandle> queue, b
 	}
 	else
 	{	// No command line argument, check for preferences
-		auto mode = preferences.GetEnumRaw("Appearance.Windowing.startup_mode");
-		switch(mode)
+		switch(geometry.mode)
 		{
-			case STARTUP_MODE_MAXIMIZED:
+			case WindowGeometry::STARTUP_MAXIMIZED:
 				maximized = true;
 				break;
-			case STARTUP_MODE_LAST_STATE:
+			case WindowGeometry::STARTUP_LAST_STATE:
 				restored = true;
 				break;
-			case STARTUP_MODE_WINDOWED:
+			case WindowGeometry::STARTUP_WINDOWED:
 			default:
 				windowed = true;
 				break;
@@ -177,15 +178,15 @@ VulkanWindow::VulkanWindow(const string& title, shared_ptr<QueueHandle> queue, b
 		windowHeigth = workAreaHeigth;
 		if(restored)
 		{	// Restore window size and position from preferences
-			int windowWidthPref = preferences.GetInt("Appearance.Startup.startup_size_width");
-			int windowHeigthPref = preferences.GetInt("Appearance.Startup.startup_size_heigth");
-			int	windowXPositionPref = preferences.GetInt("Appearance.Startup.startup_pos_x");
-			int windowYPositionPref = preferences.GetInt("Appearance.Startup.startup_pos_y");
-			string monitorName = preferences.GetString("Appearance.Startup.monitor_name");
-			int monitorWidth = preferences.GetInt("Appearance.Startup.monitor_width");
-			int monitorHeight = preferences.GetInt("Appearance.Startup.monitor_heigth");
-			fullscreen = preferences.GetBool("Appearance.Startup.startup_fullscreen");
-			maximized = preferences.GetBool("Appearance.Startup.startup_maximized");
+			int windowWidthPref = geometry.width;
+			int windowHeigthPref = geometry.height;
+			int windowXPositionPref = geometry.x;
+			int windowYPositionPref = geometry.y;
+			string monitorName = geometry.monitorName;
+			int monitorWidth = geometry.monitorWidth;
+			int monitorHeight = geometry.monitorHeight;
+			fullscreen = geometry.fullscreen;
+			maximized = geometry.maximized;
 			if(windowWidthPref != 0 && windowHeigthPref != 0 && IsPositionValid(monitorName, monitorWidth, monitorHeight, windowXPositionPref, windowYPositionPref))
 			{	// We have stored position and size: use them
 				windowWidth = windowWidthPref;
@@ -868,29 +869,27 @@ void VulkanWindow::SetFullscreen(bool fullscreen)
 	}
 }
 
-void VulkanWindow::SaveWindowPositionAndSize()
+void VulkanWindow::SaveWindowPositionAndSize(WindowGeometry& geometry)
 {
 	int x, y;
 	glfwGetWindowPos(m_window, &x, &y);
-	PreferenceManager& preferences = PreferenceManager::GetPreferences();
-	preferences.GetPreference("Appearance.Startup.startup_size_width").SetInt(m_width);
-	preferences.GetPreference("Appearance.Startup.startup_size_heigth").SetInt(m_height);
-	preferences.GetPreference("Appearance.Startup.startup_pos_x").SetInt(x);
-	preferences.GetPreference("Appearance.Startup.startup_pos_y").SetInt(y);
-	preferences.GetPreference("Appearance.Startup.startup_fullscreen").SetBool(m_fullscreen);
-	bool maximized = (glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) == GLFW_TRUE);
-	preferences.GetPreference("Appearance.Startup.startup_maximized").SetBool(maximized);
-	int monitorWidth = 0, monitorHeight = 0;
-	string monitorName = "";
+
+	geometry.width = m_width;
+	geometry.height = m_height;
+	geometry.x = x;
+	geometry.y = y;
+	geometry.fullscreen = m_fullscreen;
+	geometry.maximized = (glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) == GLFW_TRUE);
+
+	geometry.monitorWidth = 0;
+	geometry.monitorHeight = 0;
+	geometry.monitorName = "";
 	GLFWmonitor* currentMonitor = GetCurrentMonitor();
 	if(currentMonitor)
 	{
-		monitorName = glfwGetMonitorName(currentMonitor);
-		glfwGetMonitorWorkarea(currentMonitor,&x,&y,&monitorWidth,&monitorHeight);
+		geometry.monitorName = glfwGetMonitorName(currentMonitor);
+		glfwGetMonitorWorkarea(currentMonitor, &x, &y, &geometry.monitorWidth, &geometry.monitorHeight);
 	}
-	preferences.GetPreference("Appearance.Startup.monitor_width").SetInt(monitorWidth);
-	preferences.GetPreference("Appearance.Startup.monitor_heigth").SetInt(monitorHeight);
-	preferences.GetPreference("Appearance.Startup.monitor_name").SetString(monitorName);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -92,11 +92,11 @@ ComplexFFTFilter::ComplexFFTFilter(const string& color)
 		});
 
 	m_window = FilterParameter(FilterParameter::TYPE_ENUM, Unit(Unit::UNIT_COUNTS));
-	m_window.AddEnumValue("Blackman-Harris", FFTFilter::WINDOW_BLACKMAN_HARRIS);
-	m_window.AddEnumValue("Hamming", FFTFilter::WINDOW_HAMMING);
-	m_window.AddEnumValue("Hann", FFTFilter::WINDOW_HANN);
-	m_window.AddEnumValue("Rectangular", FFTFilter::WINDOW_RECTANGULAR);
-	m_window.SetIntVal(FFTFilter::WINDOW_HAMMING);
+	m_window.AddEnumValue("Blackman-Harris", WINDOW_BLACKMAN_HARRIS);
+	m_window.AddEnumValue("Hamming", WINDOW_HAMMING);
+	m_window.AddEnumValue("Hann", WINDOW_HANN);
+	m_window.AddEnumValue("Rectangular", WINDOW_RECTANGULAR);
+	m_window.SetIntVal(WINDOW_HAMMING);
 
 	//Zero rather than a real default, so that a filter nobody configures behaves exactly as
 	//it did before batching: one transform spanning whatever arrives.
@@ -311,7 +311,7 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 	}
 
 	const int64_t bin_uhz = round(bin_uhz_raw);
-	const auto window = m_window.GetEnumVal<FFTFilter::WindowFunction>();
+	const auto window = m_window.GetEnumVal<WindowFunction>();
 	LogTrace("bin size: %s\n", Unit(Unit::UNIT_MICROHZ).PrettyPrint(bin_uhz).c_str());
 
 	//Set up output and copy time scales / configuration.
@@ -367,20 +367,20 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 	//Same constants as FFTFilter.cpp:222-240, since these are the same window shapes.
 	switch(window)
 	{
-		case FFTFilter::WINDOW_HAMMING:
+		case WINDOW_HAMMING:
 			scale *= 1.862;
 			break;
 
-		case FFTFilter::WINDOW_HANN:
+		case WINDOW_HANN:
 			scale *= 2.013;
 			break;
 
-		case FFTFilter::WINDOW_BLACKMAN_HARRIS:
+		case WINDOW_BLACKMAN_HARRIS:
 			scale *= 2.805;
 			break;
 
 		//unit
-		case FFTFilter::WINDOW_RECTANGULAR:
+		case WINDOW_RECTANGULAR:
 		default:
 			break;
 	}
@@ -394,11 +394,11 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 	args.offsetOut = 0;
 	switch(window)
 	{
-		case FFTFilter::WINDOW_HANN:
+		case WINDOW_HANN:
 			args.alpha0 = 0.5;
 			break;
 
-		case FFTFilter::WINDOW_HAMMING:
+		case WINDOW_HAMMING:
 			args.alpha0 = 25.0f / 46;
 			break;
 
@@ -438,21 +438,21 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 			pargs.phaseStep = 2 * M_PI / npoints;
 			switch(window)
 			{
-				case FFTFilter::WINDOW_HANN:
+				case WINDOW_HANN:
 					pargs.alpha0 = 0.5;
 					pargs.alpha1 = 0.5;
 					pargs.alpha2 = 0;
 					pargs.alpha3 = 0;
 					break;
 
-				case FFTFilter::WINDOW_HAMMING:
+				case WINDOW_HAMMING:
 					pargs.alpha0 = 25.0f / 46;
 					pargs.alpha1 = 21.0f / 46;
 					pargs.alpha2 = 0;
 					pargs.alpha3 = 0;
 					break;
 
-				case FFTFilter::WINDOW_BLACKMAN_HARRIS:
+				case WINDOW_BLACKMAN_HARRIS:
 					pargs.alpha0 = 0.35875f;
 					pargs.alpha1 = 0.48829f;
 					pargs.alpha2 = 0.14128f;
@@ -460,7 +460,7 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 					break;
 
 				default:
-				case FFTFilter::WINDOW_RECTANGULAR:
+				case WINDOW_RECTANGULAR:
 					pargs.alpha0 = 1;
 					pargs.alpha1 = 0;
 					pargs.alpha2 = 0;
@@ -492,17 +492,17 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 			ComputePipeline* wpipe = nullptr;
 			switch(window)
 			{
-				case FFTFilter::WINDOW_BLACKMAN_HARRIS:
+				case WINDOW_BLACKMAN_HARRIS:
 					wpipe = &m_blackmanHarrisComputePipeline;
 					break;
 
-				case FFTFilter::WINDOW_HANN:
-				case FFTFilter::WINDOW_HAMMING:
+				case WINDOW_HANN:
+				case WINDOW_HAMMING:
 					wpipe = &m_cosineSumComputePipeline;
 					break;
 
 				default:
-				case FFTFilter::WINDOW_RECTANGULAR:
+				case WINDOW_RECTANGULAR:
 					wpipe = &m_rectangularComputePipeline;
 					break;
 			}

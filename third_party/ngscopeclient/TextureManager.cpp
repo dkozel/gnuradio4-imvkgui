@@ -33,7 +33,6 @@
 	@brief Implementation of TextureManager
  */
 
-#include "ngscopeclient.h"
 #include "TextureManager.h"
 
 using namespace std;

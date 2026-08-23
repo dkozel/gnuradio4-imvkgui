@@ -52,7 +52,7 @@ class ComplexChannel : public OscilloscopeChannel
 public:
 
 	ComplexChannel(
-		Oscilloscope* scope,
+		Instrument* scope,
 		const std::string& hwname,
 		const std::string& color,
 		Unit xunit = Unit(Unit::UNIT_FS),

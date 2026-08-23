@@ -11,7 +11,7 @@
 #ifndef SpectrumArea_h
 #define SpectrumArea_h
 
-#include "TextureCompat.h"
+#include "TextureManager.h"
 
 #include <scopehal/ComputePipeline.h>
 

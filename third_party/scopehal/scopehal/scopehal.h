@@ -64,11 +64,11 @@
 #include "../log/log.h"
 #include "../xptools/TimeUtil.h"
 
-#include "config.h"
+//Upstream generated a config.h here through configure_file(). Its entire content was one
+//comment - "We want each variable defined only if CMake found it so we can #ifdef instead of
+//#if" - with every real feature flag coming from target_compile_definitions instead. Dropped
+//along with the configure_file() step.
 
-#ifdef HAVE_NVTX
-#include <nvtx3/nvtx3.hpp>
-#endif
 
 //Vulkan is now a mandatory dependency, so no compile time enable flag
 //(disable some warnings in Vulkan headers that we can't do anything about)
@@ -122,28 +122,13 @@ uint32_t GetComputeBlockCount(size_t numGlobal, size_t blockSize);
 #include "ScratchBufferManager.h"
 #include "ComputePipeline.h"
 
-#include "SCPITransport.h"
-#include "SCPISocketTransport.h"
-#include "SCPITwinLanTransport.h"
-#include "SCPILxiTransport.h"
-#include "SCPINullTransport.h"
-#include "SCPIUARTTransport.h"
-#include "SCPIHIDTransport.h"
-#include "VICPSocketTransport.h"
-#include "SCPIDevice.h"
-#ifdef __linux
-#include "SCPISocketCANTransport.h"
-#endif
 
-#if !defined(_WIN32) && !defined(__APPLE__)
-// TMC is only supported on Linux for now
-// https://github.com/glscopeclient/scopehal/issues/519
-#include "SCPITMCTransport.h"
-#endif
 
 #include "FlowGraphNode.h"
-#include "SinkNode.h"
-#include "Instrument.h"
+
+//Was reached through Instrument.h, which is no longer in this umbrella.
+#include "InstrumentChannel.h"
+
 #include "StreamDescriptor.h"
 #include "StreamGroupDescriptor.h"
 #include "InputConstraint.h"
@@ -152,59 +137,11 @@ uint32_t GetComputeBlockCount(size_t numGlobal, size_t blockSize);
 #include "StreamDescriptor_inlines.h"
 #include "StreamGroupDescriptor_inlines.h"
 #include "FlowGraphNode_inlines.h"
-#include "Trigger.h"
 
-#include "BERT.h"
-#include "BinaryDriver.h"
-#include "CommandLineDriver.h"
-#include "DigitalIOChannel.h"
-#include "DigitalInputChannel.h"
-#include "DigitalOutputChannel.h"
-#include "VectorGPIOChannel.h"
-#include "VIOInputChannel.h"
-#include "VIOOutputChannel.h"
-#include "FunctionGenerator.h"
-#include "FunctionGeneratorChannel.h"
-#include "Load.h"
-#include "CANChannel.h"
-#include "Multimeter.h"
-#include "MultimeterChannel.h"
-#include "Oscilloscope.h"
-#include "SParameterChannel.h"
-#include "PowerSupply.h"
-#include "PowerSupplyChannel.h"
-#include "RFSignalGenerator.h"
-#include "RFSignalGeneratorChannel.h"
-#include "SCPIInstrument.h"
-#include "MockInstrument.h"
-#include "HIDInstrument.h"
-#include "ModbusInstrument.h"
-#include "SCPIBERT.h"
-#include "SCPIFunctionGenerator.h"
-#include "SCPILoad.h"
-#include "SCPIMiscInstrument.h"
-#include "SCPIMultimeter.h"
-#include "SCPIOscilloscope.h"
-#include "SCPIPowerSupply.h"
-#include "SCPIRFSignalGenerator.h"
-#include "SpectrometerDarkFrameChannel.h"
-#include "SCPISA.h"
-#include "SCPISDR.h"
-#include "SCPISpectrometer.h"
-#include "SCPIVNA.h"
-#include "SwitchMatrix.h"
 
-#include "SParameters.h"
-#include "TouchstoneParser.h"
-#include "IBISParser.h"
 
 #include "FilterParameter.h"
 #include "Filter.h"
-#include "ImportFilter.h"
-#include "PeakDetectionFilter.h"
-#include "SpectrumChannel.h"
-#include "SParameterSourceFilter.h"
-#include "SParameterFilter.h"
 
 #include "FilterGraphExecutor.h"
 
@@ -228,12 +165,10 @@ void GetTimestampOfFile(const std::string& path, time_t& timestamp, int64_t& fs)
 std::string to_string_sci(double d);
 std::string to_string_hex(uint64_t n, bool zeropad = false, int len = 0);
 
-void TransportStaticInit();
-void DriverStaticInit();
+void ScopehalStaticInit();
 
 bool VulkanInit(bool skipGLFW = false);
 void InitializeSearchPaths();
-void InitializePlugins();
 void DetectCPUFeatures();
 std::string GetDirOfCurrentExecutable();
 

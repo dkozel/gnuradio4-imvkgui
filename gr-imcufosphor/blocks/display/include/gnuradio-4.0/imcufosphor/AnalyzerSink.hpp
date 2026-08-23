@@ -608,20 +608,20 @@ protected:
 	}
 
 	///@brief Maps a window name onto the filter's enumeration, defaulting to Blackman-Harris
-	static FFTFilter::WindowFunction WindowFromName(const std::string& name)
+	static WindowFunction WindowFromName(const std::string& name)
 	{
 		if(name == "rectangular")
-			return FFTFilter::WINDOW_RECTANGULAR;
+			return WINDOW_RECTANGULAR;
 		if(name == "hamming")
-			return FFTFilter::WINDOW_HAMMING;
+			return WINDOW_HAMMING;
 		if(name == "hann")
-			return FFTFilter::WINDOW_HANN;
+			return WINDOW_HANN;
 		if(name == "blackman-harris")
-			return FFTFilter::WINDOW_BLACKMAN_HARRIS;
+			return WINDOW_BLACKMAN_HARRIS;
 
 		//An unrecognised name is a typo in a flowgraph, not a reason to refuse to display
 		//anything. Blackman-Harris is the default the application uses.
-		return FFTFilter::WINDOW_BLACKMAN_HARRIS;
+		return WINDOW_BLACKMAN_HARRIS;
 	}
 };
 

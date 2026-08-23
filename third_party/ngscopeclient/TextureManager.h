@@ -35,9 +35,26 @@
 #ifndef TextureManager_h
 #define TextureManager_h
 
-class TextureManager;
+//Upstream this header had no #include directives at all and relied on its includer having
+//read ngscopeclient.h first, which is why every file that wanted a window also got
+//ngscopeclient's instrument-session model. These are what it actually names.
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
+#include <scopehal/scopehal.h>
+
+#include <memory>
+#include <string>
+#include <vector>
+
+//ImTextureID, and the backend that creates and frees the descriptor sets behind it
+#include <imgui.h>
+#include <backends/imgui_impl_vulkan.h>
 
 #include <png.h>
+
+class TextureManager;
 
 /**
 	@brief Encapsulates the various Vulkan objects we need to represent texture image memory

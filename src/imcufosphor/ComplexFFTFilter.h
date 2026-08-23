@@ -39,7 +39,21 @@
 #include "scopehal.h"
 #include "Filter.h"
 #include "VulkanFFTPlan.h"
-#include "FFTFilter.h"
+
+/**
+	@brief Window functions ComplexFFTFilter can apply
+
+	Was WindowFunction, which is the only thing this file wanted from
+	scopeprotocols' FFTFilter.h - no FFTFilter symbol was ever linked. The enumerators match
+	upstream's, because the shaders these select are upstream's and unmodified.
+ */
+enum WindowFunction
+{
+	WINDOW_RECTANGULAR,
+	WINDOW_HANN,
+	WINDOW_HAMMING,
+	WINDOW_BLACKMAN_HARRIS
+};
 
 #include "PackedIQWaveform.h"
 
@@ -176,7 +190,7 @@ public:
 	virtual void SetOffset(float offset, size_t stream) override;
 
 	///@brief Sets the window function, using FFTFilter's enumeration
-	void SetWindowFunction(FFTFilter::WindowFunction f)
+	void SetWindowFunction(WindowFunction f)
 	{ m_window.SetIntVal(f); }
 
 	/**

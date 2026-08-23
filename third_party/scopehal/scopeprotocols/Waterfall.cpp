@@ -29,7 +29,7 @@
 
 #include "../scopehal/scopehal.h"
 #include "Waterfall.h"
-#include "FFTFilter.h"
+//FFTFilter.h was included here upstream and nothing in this file uses it.
 
 using namespace std;
 
