@@ -252,10 +252,11 @@ public:
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Serialization
 
-	virtual YAML::Node SerializeConfiguration(IDTable& table) override;
 
-	virtual void LoadParameters(const YAML::Node& node, IDTable& table) override;
-	virtual void LoadInputs(const YAML::Node& node, IDTable& table) override;
+	//SerializeConfiguration(), LoadParameters() and LoadInputs() were declared here. They
+	//serialized the filter graph to YAML for ngscopeclient's session files. Nothing in this
+	//project saves or loads a session, and they were the only reason it linked yaml-cpp.
+
 
 	virtual bool ShouldPersistWaveform() override;
 

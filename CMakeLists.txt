@@ -114,23 +114,6 @@ endif()
 find_package(PkgConfig MODULE REQUIRED)
 find_package(ZLIB REQUIRED)
 
-# yaml-cpp is used throughout scopehal
-find_package(yaml-cpp REQUIRED)
-#WORKAROUND some distros do not provide a yaml-cpp::yaml-cpp target
-if(NOT TARGET yaml-cpp::yaml-cpp)
-	find_library(YAML_CPP_LIBRARIES_FILES NAMES ${YAML_CPP_LIBRARIES})
-	if(YAML_CPP_LIBRARIES_FILES MATCHES ".so$")
-		add_library(yaml-cpp::yaml-cpp SHARED IMPORTED)
-	elseif(YAML_CPP_LIBRARIES_FILES MATCHES ".a$")
-		add_library(yaml-cpp::yaml-cpp STATIC IMPORTED)
-	else()
-		message(FATAL_ERROR "Unexpected partially-installed yaml-cpp, is it installed correctly?")
-	endif()
-	set_property(TARGET yaml-cpp::yaml-cpp PROPERTY IMPORTED_LOCATION ${YAML_CPP_LIBRARIES_FILES})
-	find_path(YAML_CPP_INCLUDEFILES_DIR yaml-cpp/yaml.h REQUIRED)
-	set_property(TARGET yaml-cpp::yaml-cpp PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${YAML_CPP_INCLUDEFILES_DIR})
-endif()
-
 # sigc++ is used by scopehal's FilterParameter change signals
 pkg_check_modules(SIGCXX QUIET IMPORTED_TARGET sigc++-3.0)
 if(NOT SIGCXX_FOUND)

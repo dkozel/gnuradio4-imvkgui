@@ -117,9 +117,6 @@ SYSTEM PUBLIC
 
 target_link_libraries(scopehal
 PUBLIC
-	# Only for the filter-graph serialization in Filter.cpp and FlowGraphNode.cpp, which
-	# nothing in this project calls. Removed next.
-	yaml-cpp::yaml-cpp
 	PkgConfig::SIGCXX
 	OpenMP::OpenMP_CXX
 	Vulkan::Loader

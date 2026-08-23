@@ -59,7 +59,9 @@
 
 #include <sigc++/sigc++.h>
 
-#include <yaml-cpp/yaml.h>
+//yaml-cpp was included here for the filter-graph serialization in Filter.cpp and
+//FlowGraphNode.cpp, which served ngscopeclient's session files. Nothing in this project saves
+//or loads a session, so both the code and the dependency are gone.
 
 #include "../log/log.h"
 #include "../xptools/TimeUtil.h"

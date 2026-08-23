@@ -131,18 +131,11 @@ public:
 	size_t GetParamCount()
 	{ return m_parameters.size(); }
 
-	/**
-		@brief Serializes this trigger's configuration to a YAML string.
 
-		@return YAML block with this trigger's configuration
-	 */
-	virtual YAML::Node SerializeConfiguration(IDTable& table);
+		//SerializeConfiguration(), LoadParameters() and LoadInputs() were declared here. They
+	//serialized the filter graph to YAML for ngscopeclient's session files. Nothing in this
+	//project saves or loads a session, and they were the only reason it linked yaml-cpp.
 
-	/**
-		@brief Load configuration from a save file
-	 */
-	virtual void LoadParameters(const YAML::Node& node, IDTable& table);
-	virtual void LoadInputs(const YAML::Node& node, IDTable& table);
 
 	bool IsDownstreamOf(std::set<FlowGraphNode*> nodes);
 
