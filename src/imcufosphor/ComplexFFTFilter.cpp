@@ -53,7 +53,7 @@ static const int64_t g_maxAxisMicrohertz = 1000000000000000000LL;
 // Construction / destruction
 
 ComplexFFTFilter::ComplexFFTFilter(const string& color)
-	: PeakDetectionFilter(color, CAT_RF)
+	: Filter(color, CAT_RF, Unit(Unit::UNIT_HZ))
 	, m_cachedNumPoints(0)
 	, m_cachedNumBlocks(0)
 	, m_cachedNumOuts(0)
@@ -141,20 +141,10 @@ void ComplexFFTFilter::SetOffset(float offset, size_t /*stream*/)
 
 uint32_t ComplexFFTFilter::GetExecutionCapabilitiesMask()
 {
-	//Peak detection has to read back the output on the CPU, so it cannot tail call.
-	if(m_numpeaks.GetIntVal() > 0)
-	{
-		return
-			(uint32_t)ExecutionCapabilities::CommandBufferAppend |
-			(uint32_t)ExecutionCapabilities::VulkanOnly;
-	}
-	else
-	{
-		return
-			(uint32_t)ExecutionCapabilities::CommandBufferAppend |
-			(uint32_t)ExecutionCapabilities::CommandBufferTailCall |
-			(uint32_t)ExecutionCapabilities::VulkanOnly;
-	}
+	return
+		(uint32_t)ExecutionCapabilities::CommandBufferAppend |
+		(uint32_t)ExecutionCapabilities::CommandBufferTailCall |
+		(uint32_t)ExecutionCapabilities::VulkanOnly;
 }
 
 void ComplexFFTFilter::ReallocateBuffers(size_t npoints, size_t nouts, size_t nblocks)
@@ -584,22 +574,4 @@ void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<Queue
 
 	cap->MarkModifiedFromGpu();
 
-	//If doing peak detection, block now.
-	//
-	//Only meaningful for a single spectrum: FindPeaks() treats the output as one trace, so
-	//on a batch it would report peaks at positions that mean nothing. Say so rather than
-	//returning confident nonsense.
-	if( (m_numpeaks.GetIntVal() > 0) && (nblocks > 1) )
-	{
-		AddErrorMessage("Unsupported",
-			"Peak detection needs a single spectrum; this block holds " + to_string(nblocks));
-	}
-	else if(m_numpeaks.GetIntVal() > 0)
-	{
-		cmdBuf.end();
-		queue->SubmitAndBlock(cmdBuf);
-
-		//Peak search (for now this runs on the CPU)
-		FindPeaks(cap, cmdBuf, queue);
-	}
 }

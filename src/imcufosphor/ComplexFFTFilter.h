@@ -37,7 +37,7 @@
 //scopehal and scopeprotocols export their source directories as PUBLIC include paths,
 //so these resolve without relative paths.
 #include "scopehal.h"
-#include "PeakDetectionFilter.h"
+#include "Filter.h"
 #include "VulkanFFTPlan.h"
 #include "FFTFilter.h"
 
@@ -158,7 +158,7 @@ struct ComplexToLogMagnitudeShiftedArgs
 	within one spectrum. A consumer has to know the transform length to index it; that is
 	what SpectrumReducer's "Bins per spectrum" parameter is for.
  */
-class ComplexFFTFilter : public PeakDetectionFilter
+class ComplexFFTFilter : public Filter
 {
 public:
 	ComplexFFTFilter(const std::string& color);
