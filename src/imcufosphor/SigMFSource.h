@@ -12,7 +12,6 @@
 #define SigMFSource_h
 
 #include <scopehal/scopehal.h>
-#include <scopehal/Oscilloscope.h>
 #include <scopehal/ComplexChannel.h>
 
 #include "sigmf_core_generated.h"
@@ -23,6 +22,10 @@
 #include "PackedIQWaveform.h"
 #include "RecordingClock.h"
 
+#include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -109,20 +112,6 @@ public:
 };
 
 /**
-	@brief Plays back a SigMF recording as if it were a live SDR
-
-	An Oscilloscope subclass rather than an SCPISDR, because SCPISDR is bound to an
-	SCPITransport and there is no instrument here. MockOscilloscope is the precedent for an
-	instrument with no transport.
-
-	Exposes one ComplexChannel named "RX", which supplies I, Q and a center-frequency scalar
-	stream - the third of these is required by any downstream complex filter and is the
-	specific reason ComplexImportFilter is not usable. See DESIGN.md section 7.1.
-
-	AcquireData() reads a bounded block at the play cursor and converts it, so memory stays
-	flat regardless of file size. The demo dataset includes 2.9 GB recordings.
- */
-/**
 	@brief Converts a record's annotations into the display-neutral model
 
 	The one place SigMFRecord and AnnotationSet are both visible. Free rather than a method so
@@ -134,9 +123,43 @@ public:
  */
 void BuildAnnotationSet(const SigMFRecord& rec, int64_t totalSamples, AnnotationSet& out);
 
-class SigMFSource : public Oscilloscope
+/**
+	@brief A SigMF recording, played into the filter graph
+
+	Owns one ComplexChannel supplying I, Q and a center-frequency scalar (ComplexChannel.h:63),
+	reads blocks of samples at the play cursor with pread(), and publishes them on that channel.
+
+	@par Why this is not an Oscilloscope
+
+	It was one until this commit, and DESIGN.md D1 still records the reasoning. That reasoning
+	holds up as an argument against ComplexImportFilter - which reads an entire recording into
+	memory in one fread and exposes no center frequency - but none of the three things it asks
+	for came from the base class:
+
+	  - bounded memory on a large recording is this class's own pread loop;
+	  - the center-frequency stream is ComplexChannel's;
+	  - run/stop/single is the three bools below.
+
+	What the base class did supply was 47 overrides, of which six were ever called, and a
+	vtable slot for every non-pure virtual in Oscilloscope and Instrument - AutoZero, Degauss,
+	GetADCMode, GetInputMuxNames, GetProbeName, GetDigitalHysteresis, SerializeConfiguration.
+	Measured, that was 98 of the 195 scopehal symbols this application referenced.
+
+	IqInjector already demonstrated the alternative for live samples: a ComplexChannel with a
+	null Oscilloscope* is a supported construction that the verification suite drives a real
+	ComplexFFTFilter from. This is the same shape, with a file behind it instead of a port.
+ */
+class SigMFSource
 {
 public:
+
+	/**
+		@brief The waveforms published by one acquisition, keyed by the stream they go on
+
+		Was Oscilloscope::SequenceSet (Oscilloscope.h:906). Same type, declared here because
+		this class is the only thing that ever built one.
+	 */
+	typedef std::map<StreamDescriptor, WaveformBase*> SequenceSet;
 
 	/**
 		@brief Opens a SigMF recording
@@ -323,78 +346,63 @@ public:
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Oscilloscope implementation
+	// Playback
+	//
+	// What was 47 Oscilloscope overrides. Everything below is called by something.
 
-	virtual std::string IDPing() override
-	{ return ""; }
-
-	virtual std::string GetDriverName() const
-	{ return "sigmf"; }
-
-	//Instrument identity. These are pure virtual on Instrument rather than Oscilloscope,
-	//which is easy to miss: the full implementation surface is 42 pure virtuals, not the
-	//37 that Oscilloscope.h alone declares.
-
-	virtual std::string GetName() const override
+	///@brief Display name of the recording, from the data file's basename
+	std::string GetName() const
 	{ return m_recordingName; }
 
-	virtual std::string GetVendor() const override
-	{ return "SigMF"; }
+	/**
+		@brief The channel the filter graph reads from
 
-	virtual std::string GetSerial() const override
-	{ return ""; }
+		Streams 0, 1 and 2 are I, Q and the center frequency, matching what IqInjector exposes,
+		so a consumer cannot tell a recording from a live port.
+	 */
+	ComplexChannel* GetChannel()
+	{ return m_chan.get(); }
 
-	virtual std::string GetTransportConnectionString() override
-	{ return m_dataPath; }
+	/**
+		@brief Reads one block at the play cursor and queues it
 
-	virtual std::string GetTransportName() override
-	{ return "file"; }
+		The waveform is not visible to the graph until PopPendingWaveform() attaches it.
+	 */
+	bool AcquireData();
 
-	virtual unsigned int GetInstrumentTypes() const override;
-	virtual uint32_t GetInstrumentTypesForChannel(size_t i) const override;
+	/**
+		@brief Attaches the oldest queued block to the channel
 
-	virtual bool AcquireData() override;
-	virtual Oscilloscope::TriggerMode PollTrigger() override;
-	virtual void Start() override;
-	virtual void StartSingleTrigger() override;
-	virtual void Stop() override;
-	virtual void ForceTrigger() override;
-	virtual bool IsTriggerArmed() override;
-	virtual void PushTrigger() override;
-	virtual void PullTrigger() override;
+		Was Oscilloscope::PopPendingWaveform(). Reimplemented here because the queue it drains
+		is one this class fills itself, and the fifteen lines of base class around it came
+		attached to Instrument's configuration-serialization surface.
 
-	virtual bool IsChannelEnabled(size_t i) override;
-	virtual void EnableChannel(size_t i) override;
-	virtual void DisableChannel(size_t i) override;
-	virtual OscilloscopeChannel::CouplingType GetChannelCoupling(size_t i) override;
-	virtual void SetChannelCoupling(size_t i, OscilloscopeChannel::CouplingType type) override;
-	virtual std::vector<OscilloscopeChannel::CouplingType> GetAvailableCouplings(size_t i) override;
-	virtual double GetChannelAttenuation(size_t i) override;
-	virtual void SetChannelAttenuation(size_t i, double atten) override;
-	virtual unsigned int GetChannelBandwidthLimit(size_t i) override;
-	virtual void SetChannelBandwidthLimit(size_t i, unsigned int limit_mhz) override;
-	virtual float GetChannelVoltageRange(size_t i, size_t stream) override;
-	virtual void SetChannelVoltageRange(size_t i, size_t stream, float range) override;
-	virtual float GetChannelOffset(size_t i, size_t stream) override;
-	virtual void SetChannelOffset(size_t i, size_t stream, float offset) override;
-	virtual OscilloscopeChannel* GetExternalTrigger() override;
+		@return True if a block was attached
+	 */
+	bool PopPendingWaveform();
 
-	virtual std::vector<uint64_t> GetSampleRatesNonInterleaved() override;
-	virtual std::vector<uint64_t> GetSampleRatesInterleaved() override;
-	virtual uint64_t GetSampleRate() override;
-	virtual void SetSampleRate(uint64_t rate) override;
-	virtual std::vector<uint64_t> GetSampleDepthsNonInterleaved() override;
-	virtual std::vector<uint64_t> GetSampleDepthsInterleaved() override;
-	virtual uint64_t GetSampleDepth() override;
-	virtual void SetSampleDepth(uint64_t depth) override;
-	virtual bool IsInterleaving() override;
-	virtual bool SetInterleaving(bool combine) override;
-	virtual std::set<InterleaveConflict> GetInterleaveConflicts() override;
-	virtual void SetTriggerOffset(int64_t offset) override;
-	virtual int64_t GetTriggerOffset() override;
+	///@brief Arms playback for continuous acquisition
+	void Start();
 
-	virtual bool HasFrequencyControls() override;
-	virtual bool HasTimebaseControls() override;
+	///@brief Arms playback for a single block
+	void StartSingleTrigger();
+
+	///@brief Disarms playback
+	void Stop();
+
+	///@brief True while armed
+	bool IsTriggerArmed() const
+	{ return m_triggerArmed; }
+
+	///@brief True once playback has run off the end without looping
+	bool IsAtEnd() const
+	{ return m_atEnd; }
+
+	///@brief Complex samples delivered per AcquireData() call
+	uint64_t GetSampleDepth() const
+	{ return m_blockSize; }
+
+	void SetSampleDepth(uint64_t depth);
 
 protected:
 
@@ -435,6 +443,9 @@ protected:
 
 	///@brief Display name of the recording, from the data file's basename
 	std::string m_recordingName;
+
+	///@brief Short name prefixed to the waveforms' Vulkan debug names. Was Instrument's.
+	std::string m_nickname;
 
 	///@brief File descriptor for the data file, or -1
 	int m_fd;
@@ -532,9 +543,19 @@ protected:
 	///@brief Accumulated complex samples handed downstream
 	int64_t m_samplesDelivered;
 
-	//Oscilloscope does not provide storage for these, unlike SCPISDR, so we keep our own
-	std::map<std::pair<size_t, size_t>, float> m_channelVoltageRange;
-	std::map<std::pair<size_t, size_t>, float> m_channelOffset;
+	/**
+		@brief The channel the graph reads from
+
+		Constructed with a null Oscilloscope*, exactly as IqInjector.cpp:34 does. Nothing
+		downstream calls GetScope() on it, and nothing reads its voltage range - every
+		GetVoltageRange() call in the display is on a filter, not on this.
+	 */
+	std::unique_ptr<ComplexChannel> m_chan;
+
+	//Blocks read but not yet attached to the channel. Was Oscilloscope's; this class was
+	//always the only thing that filled it.
+	std::deque<SequenceSet> m_pendingWaveforms;
+	std::mutex m_pendingWaveformsMutex;
 };
 
 #endif

@@ -270,22 +270,20 @@ SigMFSource::SigMFSource(const string& metaPath, const string& dataPath)
 	m_nickname = "sigmf";
 	m_recordingName = "SigMF recording";
 
-	//One complex channel, which gives us I, Q and the center frequency scalar
-	auto chan = new ComplexChannel(
-		this,
+	//One complex channel, which gives us I, Q and the center frequency scalar.
+	//
+	//Null scope pointer, as IqInjector.cpp:34 does: there is no instrument behind a file, and
+	//nothing downstream asks for one. OscilloscopeChannel only dereferences it in the
+	//per-channel hardware accessors (coupling, attenuation, deskew, voltage range), none of
+	//which anything here calls - every GetVoltageRange() in the display is on a filter.
+	m_chan = std::make_unique<ComplexChannel>(
+		nullptr,
 		"RX",
 		"#4040ff",
 		Unit(Unit::UNIT_FS),
 		Unit(Unit::UNIT_VOLTS),
-		m_channels.size());
-	m_channels.push_back(chan);
-	chan->SetDefaultDisplayName();
-
-	//Samples are normalized to +/- 1.0 regardless of source format
-	SetChannelVoltageRange(0, 0, 2);
-	SetChannelVoltageRange(0, 1, 2);
-	SetChannelOffset(0, 0, 0);
-	SetChannelOffset(0, 1, 0);
+		0);
+	m_chan->SetDefaultDisplayName();
 
 	LoadMetadata(metaPath, dataPath);
 }
@@ -996,7 +994,7 @@ bool SigMFSource::AcquireData()
 		startSec++;
 	}
 
-	auto chan = dynamic_cast<ComplexChannel*>(GetChannel(0));
+	auto chan = m_chan.get();
 	SequenceSet s;
 
 	//Packed path: the bytes are already where they need to be, so all that is left is to say
@@ -1043,7 +1041,7 @@ bool SigMFSource::AcquireData()
 	//Allocating a fresh pair per block cost 280 us, which was 72% of playback wall clock
 	//(DESIGN.md section 13). Nothing in this application returns waveforms to
 	//m_analogWaveformPool - there is no HistoryManager, which is what does it in
-	//ngscopeclient - so the pool is permanently empty and every AllocateAnalogWaveform()
+	//ngscopeclient - so the pool was permanently empty and every AllocateAnalogWaveform()
 	//built two AcceleratorBuffers from scratch: a vkAllocateMemory and vkMapMemory for
 	//pinned host memory, a device buffer, and two vk::raii::Events each, plus the matching
 	//frees when the previous pair was deleted.
@@ -1052,10 +1050,13 @@ bool SigMFSource::AcquireData()
 	//early out (InstrumentChannel.cpp:146-147) instead of deleting, so the buffers survive
 	//from block to block. The channel stays the owner and frees them when it is destroyed;
 	//these are non-owning pointers and must not be deleted here.
+	//
+	//Constructed directly rather than through Oscilloscope::AllocateAnalogWaveform(), which
+	//checked that same empty pool and then did exactly this.
 	if(!m_icap)
 	{
-		m_icap = AllocateAnalogWaveform(m_nickname + ".RX.i");
-		m_qcap = AllocateAnalogWaveform(m_nickname + ".RX.q");
+		m_icap = new UniformAnalogWaveform(m_nickname + ".RX.i");
+		m_qcap = new UniformAnalogWaveform(m_nickname + ".RX.q");
 	}
 	auto icap = m_icap;
 	auto qcap = m_qcap;
@@ -1105,16 +1106,21 @@ bool SigMFSource::AcquireData()
 	return true;
 }
 
-Oscilloscope::TriggerMode SigMFSource::PollTrigger()
-{
-	if(m_atEnd && !m_looping)
-		return TRIGGER_MODE_STOP;
-	if(!m_triggerArmed)
-		return TRIGGER_MODE_STOP;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Playback control
 
-	//Data is always available from a file, so report triggered and let the caller block in
-	//AcquireData(), the same contract the remote bridge drivers use
-	return TRIGGER_MODE_TRIGGERED;
+bool SigMFSource::PopPendingWaveform()
+{
+	lock_guard<mutex> lock(m_pendingWaveformsMutex);
+	if(m_pendingWaveforms.empty())
+		return false;
+
+	SequenceSet set = *m_pendingWaveforms.begin();
+	for(auto it : set)
+		it.first.m_channel->SetData(it.second, it.first.m_stream);
+	m_pendingWaveforms.pop_front();
+
+	return true;
 }
 
 void SigMFSource::Start()
@@ -1137,202 +1143,8 @@ void SigMFSource::Stop()
 	m_triggerOneShot = false;
 }
 
-void SigMFSource::ForceTrigger()
-{
-	StartSingleTrigger();
-}
-
-bool SigMFSource::IsTriggerArmed()
-{
-	return m_triggerArmed;
-}
-
-void SigMFSource::PushTrigger()
-{
-	//no hardware trigger to configure
-}
-
-void SigMFSource::PullTrigger()
-{
-	//no hardware trigger to configure
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Instrument and channel configuration
-//
-// A recording has no adjustable hardware, so most of this is fixed. The Oscilloscope
-// interface requires all of it regardless.
-
-unsigned int SigMFSource::GetInstrumentTypes() const
-{
-	return INST_OSCILLOSCOPE;
-}
-
-uint32_t SigMFSource::GetInstrumentTypesForChannel([[maybe_unused]] size_t i) const
-{
-	return INST_OSCILLOSCOPE;
-}
-
-bool SigMFSource::IsChannelEnabled([[maybe_unused]] size_t i)
-{
-	return true;
-}
-
-void SigMFSource::EnableChannel([[maybe_unused]] size_t i)
-{
-}
-
-void SigMFSource::DisableChannel([[maybe_unused]] size_t i)
-{
-}
-
-OscilloscopeChannel::CouplingType SigMFSource::GetChannelCoupling([[maybe_unused]] size_t i)
-{
-	return OscilloscopeChannel::COUPLE_DC_50;
-}
-
-void SigMFSource::SetChannelCoupling(
-	[[maybe_unused]] size_t i,
-	[[maybe_unused]] OscilloscopeChannel::CouplingType type)
-{
-}
-
-vector<OscilloscopeChannel::CouplingType> SigMFSource::GetAvailableCouplings([[maybe_unused]] size_t i)
-{
-	return { OscilloscopeChannel::COUPLE_DC_50 };
-}
-
-double SigMFSource::GetChannelAttenuation([[maybe_unused]] size_t i)
-{
-	return 1;
-}
-
-void SigMFSource::SetChannelAttenuation([[maybe_unused]] size_t i, [[maybe_unused]] double atten)
-{
-}
-
-unsigned int SigMFSource::GetChannelBandwidthLimit([[maybe_unused]] size_t i)
-{
-	return 0;
-}
-
-void SigMFSource::SetChannelBandwidthLimit(
-	[[maybe_unused]] size_t i,
-	[[maybe_unused]] unsigned int limit_mhz)
-{
-}
-
-float SigMFSource::GetChannelVoltageRange(size_t i, size_t stream)
-{
-	auto key = pair<size_t, size_t>(i, stream);
-	if(m_channelVoltageRange.find(key) == m_channelVoltageRange.end())
-		return 2;
-	return m_channelVoltageRange[key];
-}
-
-void SigMFSource::SetChannelVoltageRange(size_t i, size_t stream, float range)
-{
-	m_channelVoltageRange[pair<size_t, size_t>(i, stream)] = range;
-}
-
-float SigMFSource::GetChannelOffset(size_t i, size_t stream)
-{
-	auto key = pair<size_t, size_t>(i, stream);
-	if(m_channelOffset.find(key) == m_channelOffset.end())
-		return 0;
-	return m_channelOffset[key];
-}
-
-void SigMFSource::SetChannelOffset(size_t i, size_t stream, float offset)
-{
-	m_channelOffset[pair<size_t, size_t>(i, stream)] = offset;
-}
-
-OscilloscopeChannel* SigMFSource::GetExternalTrigger()
-{
-	return nullptr;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Timebase
-//
-// The sample rate and depth come from the recording, not from us. SetSampleRate is ignored
-// rather than honoured: resampling a file to a requested rate is not something a player
-// should silently do.
-
-vector<uint64_t> SigMFSource::GetSampleRatesNonInterleaved()
-{
-	return { static_cast<uint64_t>(m_sampleRate) };
-}
-
-vector<uint64_t> SigMFSource::GetSampleRatesInterleaved()
-{
-	return GetSampleRatesNonInterleaved();
-}
-
-uint64_t SigMFSource::GetSampleRate()
-{
-	return static_cast<uint64_t>(m_sampleRate);
-}
-
-void SigMFSource::SetSampleRate([[maybe_unused]] uint64_t rate)
-{
-}
-
-vector<uint64_t> SigMFSource::GetSampleDepthsNonInterleaved()
-{
-	//Block sizes we are willing to deliver per acquisition. These are the knob that trades
-	//FFT length headroom against latency; the reducer (DESIGN.md 7.3) sits downstream.
-	return { 4096, 8192, 16384, 32768, 65536, 131072, 262144, 1048576 };
-}
-
-vector<uint64_t> SigMFSource::GetSampleDepthsInterleaved()
-{
-	return GetSampleDepthsNonInterleaved();
-}
-
-uint64_t SigMFSource::GetSampleDepth()
-{
-	return m_blockSize;
-}
-
 void SigMFSource::SetSampleDepth(uint64_t depth)
 {
 	if(depth > 0)
 		m_blockSize = depth;
-}
-
-bool SigMFSource::IsInterleaving()
-{
-	return false;
-}
-
-bool SigMFSource::SetInterleaving([[maybe_unused]] bool combine)
-{
-	return false;
-}
-
-set<Oscilloscope::InterleaveConflict> SigMFSource::GetInterleaveConflicts()
-{
-	return {};
-}
-
-void SigMFSource::SetTriggerOffset([[maybe_unused]] int64_t offset)
-{
-}
-
-int64_t SigMFSource::GetTriggerOffset()
-{
-	return 0;
-}
-
-bool SigMFSource::HasFrequencyControls()
-{
-	//The center frequency is a property of the recording, not something we can tune
-	return false;
-}
-
-bool SigMFSource::HasTimebaseControls()
-{
-	return true;
 }

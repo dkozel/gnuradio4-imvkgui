@@ -665,7 +665,7 @@ static bool SpectrumPeakOfRecording(
 		return false;
 	}
 
-	auto chan = dynamic_cast<ComplexChannel*>(src.GetChannel(0));
+	auto chan = src.GetChannel();
 	auto filt = new ComplexFFTFilter("#ffffff");
 	if(!chan)
 		return false;

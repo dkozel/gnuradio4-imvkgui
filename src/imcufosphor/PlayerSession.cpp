@@ -30,7 +30,7 @@ PlayerSession::PlayerSession(SigMFSource* source, shared_ptr<QueueHandle> queue)
 	, m_rangeMax(-20)
 	, m_gpuTimingEnabled(false)
 {
-	auto chan = dynamic_cast<ComplexChannel*>(m_source->GetChannel(0));
+	auto chan = m_source->GetChannel();
 
 	m_fft = new ComplexFFTFilter("#ffffff");
 	m_fft->AddRef();
