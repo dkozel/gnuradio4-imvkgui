@@ -179,7 +179,7 @@ void ComplexFFTFilter::ReallocateBuffers(size_t npoints, size_t nouts, size_t nb
 	m_rdoutbuf.resize(2*nouts*nblocks);
 }
 
-void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, shared_ptr<QueueHandle> queue)
+void ComplexFFTFilter::Refresh(vk::raii::CommandBuffer& cmdBuf, [[maybe_unused]] shared_ptr<QueueHandle> queue)
 {
 	//Make sure we've got valid inputs.
 	//
