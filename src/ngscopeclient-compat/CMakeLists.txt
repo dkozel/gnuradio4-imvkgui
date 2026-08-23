@@ -11,12 +11,23 @@
 # cost of the lift stays visible in one file.
 
 set(NGSCOPECLIENT_DIR "${SCOPEHAL_APPS_DIR}/src/ngscopeclient")
-set(NG_IMGUI_DIR "${SCOPEHAL_APPS_DIR}/src/imgui")
+
+# ImGui, from upstream rather than through scopehal-apps.
+#
+# We used to build ngscopeclient's fork, at lib/scopehal-apps/src/imgui. Diffed against the
+# ocornut tag it merges, that fork differs in exactly one file: imstb_truetype.h, where three
+# static functions are given external linkage and forward declared, to silence a warning.
+# These translation units are compiled with -w, so the warning was never visible here, and
+# upstream's version - which keeps them internal - is the better of the two.
+#
+# So there is nothing to gain from the fork and one less submodule to reach through without
+# it. lib/imgui is pinned to v1.92.8-docking, the same release.
+set(NG_IMGUI_DIR "${PROJECT_SOURCE_DIR}/lib/imgui")
 
 if(NOT EXISTS "${NG_IMGUI_DIR}/imgui.cpp")
 	message(FATAL_ERROR
-		"lib/scopehal-apps/src/imgui is empty. The lifted display primitives need it:\n"
-		"    git -C lib/scopehal-apps submodule update --init src/imgui")
+		"lib/imgui is empty. The display primitives need it:\n"
+		"    git submodule update --init lib/imgui")
 endif()
 
 # libpng is needed by TextureManager, which decodes icon/ramp PNGs directly.
@@ -25,10 +36,8 @@ find_package(PNG REQUIRED)
 ########################################################################
 # Upstream sources, referenced in place
 
-# ngscopeclient's imgui fork. Only the core, the two backends named by
-# ngscopeclient.h, and the std::string helper are needed; the node editor, file
-# dialog, markdown and native-file-dialog submodules are not, so they stay
-# uninitialized. imgui_demo.cpp is upstream's own demo and is not built.
+# Only the core, the two backends we use, and the std::string helper. imgui_demo.cpp is
+# upstream's own demo and is not built.
 set(NGSC_COMPAT_IMGUI_SOURCES
 	${NG_IMGUI_DIR}/imgui.cpp
 	${NG_IMGUI_DIR}/imgui_draw.cpp

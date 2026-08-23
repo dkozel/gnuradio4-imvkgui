@@ -7,3 +7,6 @@
 [submodule "lib/libsigmf"]
 	path = lib/libsigmf
 	url = https://github.com/deepsig/libsigmf.git
+[submodule "lib/imgui"]
+	path = lib/imgui
+	url = https://github.com/ocornut/imgui.git
