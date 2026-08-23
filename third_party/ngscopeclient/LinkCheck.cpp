@@ -15,8 +15,8 @@
 	Running it does no windowing unless asked. The build machine may have no display, and a
 	link check that hangs waiting on a compositor is worse than no link check at all:
 
-	    ngscopeclient-compat-linkcheck            static checks only, always safe, exits immediately
-	    ngscopeclient-compat-linkcheck --window   brings up Vulkan and a real window, renders one frame
+	    window-linkcheck            static checks only, always safe, exits immediately
+	    window-linkcheck --window   brings up Vulkan and a real window, renders one frame
 
 	See notes/R2-lifted-primitives.md.
  */
@@ -61,7 +61,7 @@ static bool RunWindowSmokeTest()
 	}
 
 	auto queue = g_vkQueueManager->GetQueueFromPool(
-		QueueManager::QUEUE_POOL_RENDER, "ngscopeclient-compat-linkcheck.render");
+		QueueManager::QUEUE_POOL_RENDER, "window-linkcheck.render");
 
 	TextureManager textures(queue);
 	LinkCheckWindow window(queue);
@@ -92,8 +92,8 @@ int main(int argc, char* argv[])
 			doWindow = true;
 		else if(s == "--help")
 		{
-			printf("ngscopeclient-compat-linkcheck: link check for the lifted ngscopeclient display primitives\n");
-			printf("Usage: ngscopeclient-compat-linkcheck [--window] [logger options]\n");
+			printf("window-linkcheck: link check for the lifted ngscopeclient display primitives\n");
+			printf("Usage: window-linkcheck [--window] [logger options]\n");
 			return 0;
 		}
 		else
@@ -111,8 +111,6 @@ int main(int argc, char* argv[])
 	void (TextureManager::*pLoad)(const string&, const string&) = &TextureManager::LoadTexture;
 	LogNotice("VulkanWindow::Render and TextureManager::LoadTexture resolved (%d, %d)\n",
 		pRender != nullptr, pLoad != nullptr);
-
-		return 1;
 
 	if(doWindow)
 	{

@@ -223,6 +223,24 @@ if(LIBSIGMF_INTERFACE_INCLUDES)
 endif()
 
 
+# Testing is enabled unconditionally, and ahead of every directory of ours that registers a
+# test - but after libsigmf, whose bundled flatbuffers would otherwise add its own suite to
+# ours.
+#
+# This used to live inside the BUILD_GR4_BLOCKS block, which meant the default build
+# configuration had no tests at all - not a short suite, none - and the only correctness check
+# in the project was a wfbench invocation someone had to remember to type.
+include(CTest)
+enable_testing()
+
+# Cheap, no build required, and it is the thing most likely to rot silently: a new file that
+# reaches into a dependency by relative path compiles perfectly well and quietly re-couples us
+# to somebody else's directory layout. See cmake/CheckIncludeStyle.cmake.
+add_test(NAME include-style
+	COMMAND ${CMAKE_COMMAND}
+		"-DROOTS=${PROJECT_SOURCE_DIR}/src|${PROJECT_SOURCE_DIR}/tools|${PROJECT_SOURCE_DIR}/gr-imcufosphor"
+		-P "${PROJECT_SOURCE_DIR}/cmake/CheckIncludeStyle.cmake")
+
 # Display primitives vendored from ngscopeclient, plus ImGui.
 add_subdirectory("${PROJECT_SOURCE_DIR}/third_party/ngscopeclient")
 
