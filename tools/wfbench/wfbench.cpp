@@ -18,7 +18,10 @@
 	the totals alone cannot distinguish them. See DESIGN.md section 13.
  */
 
-#include "../../lib/scopehal/scopeprotocols/scopeprotocols.h"
+//scopehal.h first: Waterfall.h is not self-contained, and reaches DensityFunctionWaveform.h
+//through a relative path that assumes the umbrella has already been read.
+#include "../../lib/scopehal/scopehal/scopehal.h"
+#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
 
 #include "PlayerSession.h"
 #include "SigMFSource.h"
@@ -477,12 +480,6 @@ static int ParseArguments(int argc, char* argv[], BenchConfig& cfg)
 	InitializeSearchPaths();
 	DetectCPUFeatures();
 	Unit::InitializeLocales();
-	ScopeProtocolStaticInit();
-
-	//Our app-local filters, same as main.cpp
-	AddDecoderClass(ComplexFFTFilter);
-	AddDecoderClass(SpectrumReducer);
-	AddDecoderClass(SpectrumDensity);
 
 	//Survey needs no session, and takes a list rather than a single recording
 	if(!cfg.surveyPaths.empty())

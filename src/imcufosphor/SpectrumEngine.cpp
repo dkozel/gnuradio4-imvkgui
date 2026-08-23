@@ -16,23 +16,6 @@
 using namespace std;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Filter registration
-
-void RegisterImcufosphorFilters()
-{
-	//AddDecoderClass installs into a name-keyed map, so registering twice would leave a
-	//duplicate entry that CreateFilter picks between arbitrarily. Once per process.
-	static bool registered = false;
-	if(registered)
-		return;
-	registered = true;
-
-	AddDecoderClass(ComplexFFTFilter);
-	AddDecoderClass(SpectrumReducer);
-	AddDecoderClass(SpectrumDensity);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
 
 SpectrumEngine::SpectrumEngine(EnginePart parts, shared_ptr<QueueHandle> queue)
@@ -46,14 +29,10 @@ SpectrumEngine::SpectrumEngine(EnginePart parts, shared_ptr<QueueHandle> queue)
 	, m_rowsPlayed(0)
 	, m_gpuTimingEnabled(false)
 {
-	//A host that only ever constructs an engine should not also have to know which filters it
-	//depends on. Idempotent, so a host that does call it as well is fine.
-	RegisterImcufosphorFilters();
-
 	m_injector = make_unique<IqInjector>("RX");
 	auto chan = m_injector->GetChannel();
 
-	m_fft = dynamic_cast<ComplexFFTFilter*>(Filter::CreateFilter("Complex FFT", "#ffffff"));
+	m_fft = new ComplexFFTFilter("#ffffff");
 	m_fft->AddRef();
 	m_fft->SetInput("I", StreamDescriptor(chan, 0));
 
@@ -66,11 +45,11 @@ SpectrumEngine::SpectrumEngine(EnginePart parts, shared_ptr<QueueHandle> queue)
 
 	if(HasPart(m_parts, EnginePart::Waterfall))
 	{
-		m_reducer = dynamic_cast<SpectrumReducer*>(Filter::CreateFilter("Spectrum Reducer", "#ffffff"));
+		m_reducer = new SpectrumReducer("#ffffff");
 		m_reducer->AddRef();
 		m_reducer->SetInput(0, StreamDescriptor(m_fft, 0));
 
-		m_waterfall = dynamic_cast<Waterfall*>(Filter::CreateFilter("Waterfall", "#ffffff"));
+		m_waterfall = new Waterfall("#ffffff");
 		m_waterfall->AddRef();
 		m_waterfall->SetInput(0, StreamDescriptor(m_reducer, 0));
 	}
@@ -80,7 +59,7 @@ SpectrumEngine::SpectrumEngine(EnginePart parts, shared_ptr<QueueHandle> queue)
 		//A parallel consumer of the same FFT batch, not a stage after the reducer. The two want
 		//different cadences - the reducer folds every block, the density map every window - and
 		//produce different output types.
-		m_density = dynamic_cast<SpectrumDensity*>(Filter::CreateFilter("Spectrum Density", "#ffffff"));
+		m_density = new SpectrumDensity("#ffffff");
 		m_density->AddRef();
 		m_density->SetInput(0, StreamDescriptor(m_fft, 0));
 	}

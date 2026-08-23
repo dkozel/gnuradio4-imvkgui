@@ -12,7 +12,7 @@
  */
 
 #include "../../lib/scopehal/scopehal/scopehal.h"
-#include "../../lib/scopehal/scopeprotocols/scopeprotocols.h"
+#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
 
 #include "ComplexFFTFilter.h"
 #include "MainWindow.h"
@@ -135,13 +135,6 @@ int main(int argc, char* argv[])
 	InitializeSearchPaths();
 	DetectCPUFeatures();
 	Unit::InitializeLocales();
-	ScopeProtocolStaticInit();
-
-	//Our own filters. scopeprotocols is consumed unmodified (DESIGN.md D3), so anything
-	//app-local registers here rather than in ScopeProtocolStaticInit().
-	AddDecoderClass(ComplexFFTFilter);
-	AddDecoderClass(SpectrumReducer);
-	AddDecoderClass(SpectrumDensity);
 
 	bool ok = RunGui(path);
 

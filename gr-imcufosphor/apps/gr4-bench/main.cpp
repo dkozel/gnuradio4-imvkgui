@@ -36,7 +36,9 @@
 #include <string>
 #include <vector>
 
-#include "../../../lib/scopehal/scopeprotocols/scopeprotocols.h"
+//scopehal.h first: Waterfall.h is not self-contained.
+#include "../../../lib/scopehal/scopehal/scopehal.h"
+#include "../../../lib/scopehal/scopeprotocols/Waterfall.h"
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
@@ -286,8 +288,6 @@ int main(int argc, char* argv[])
 	InitializeSearchPaths();
 	DetectCPUFeatures();
 	Unit::InitializeLocales();
-	ScopeProtocolStaticInit();
-	RegisterImcufosphorFilters();
 
 	printf("gr4-bench: %s, fft %u, block %u, %.1f s per stage\n",
 		opt.file.empty() ? opt.source.c_str() : opt.file.c_str(),

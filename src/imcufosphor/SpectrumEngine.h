@@ -80,16 +80,6 @@ struct EngineConfig
 };
 
 /**
-	@brief Registers the app-local filters with scopehal
-
-	Idempotent, and called from SpectrumEngine's constructor so that no host can forget it.
-	Before this existed the same three AddDecoderClass calls were copy-pasted into main.cpp and
-	into wfbench, and a third host would have copied them again. Waterfall belongs to
-	scopeprotocols and arrives via ScopeProtocolStaticInit(), which is not ours to call.
- */
-void RegisterImcufosphorFilters();
-
-/**
 	@brief Runs the analysis graph over IQ handed to it from outside
 
 	PlayerSession without the recording. Same filters, same wiring, same one-command-buffer

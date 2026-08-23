@@ -32,14 +32,14 @@ PlayerSession::PlayerSession(SigMFSource* source, shared_ptr<QueueHandle> queue)
 {
 	auto chan = dynamic_cast<ComplexChannel*>(m_source->GetChannel(0));
 
-	m_fft = dynamic_cast<ComplexFFTFilter*>(Filter::CreateFilter("Complex FFT", "#ffffff"));
+	m_fft = new ComplexFFTFilter("#ffffff");
 	m_fft->AddRef();
 	m_fft->SetInput("I", StreamDescriptor(chan, 0));
 	m_fft->SetInput("Q", StreamDescriptor(chan, 1));
 	m_fft->SetInput("center", StreamDescriptor(chan, 2));
 	m_fft->SetWindowFunction(FFTFilter::WINDOW_BLACKMAN_HARRIS);
 
-	m_reducer = dynamic_cast<SpectrumReducer*>(Filter::CreateFilter("Spectrum Reducer", "#ffffff"));
+	m_reducer = new SpectrumReducer("#ffffff");
 	m_reducer->AddRef();
 	m_reducer->SetInput(0, StreamDescriptor(m_fft, 0));
 
@@ -48,11 +48,11 @@ PlayerSession::PlayerSession(SigMFSource* source, shared_ptr<QueueHandle> queue)
 	//produce different output types. DESIGN.md section 10 anticipated widening the reducer
 	//itself, which was written before the FFT emitted a batch per block; now that it does, a
 	//second consumer is the simpler shape.
-	m_density = dynamic_cast<SpectrumDensity*>(Filter::CreateFilter("Spectrum Density", "#ffffff"));
+	m_density = new SpectrumDensity("#ffffff");
 	m_density->AddRef();
 	m_density->SetInput(0, StreamDescriptor(m_fft, 0));
 
-	m_waterfall = dynamic_cast<Waterfall*>(Filter::CreateFilter("Waterfall", "#ffffff"));
+	m_waterfall = new Waterfall("#ffffff");
 	m_waterfall->AddRef();
 	m_waterfall->SetInput(0, StreamDescriptor(m_reducer, 0));
 

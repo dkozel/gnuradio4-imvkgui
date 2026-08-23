@@ -37,7 +37,7 @@
 	supported construction that the shipped test suite already drives a real ComplexFFTFilter
 	from (Verify.cpp:478-490). Nothing in ComplexFFTFilter::Refresh() calls GetScope(). So this
 	class owns a channel and a waveform, and produces data by being told rather than by being
-	run. No Filter subclass, no Refresh(), no AddDecoderClass, no refcount.
+	run. No Filter subclass, no Refresh(), no registration, no refcount.
 
 	@par The packed contract
 

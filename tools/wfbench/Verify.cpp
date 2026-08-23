@@ -12,7 +12,7 @@
 //scopehal.h first: ComplexChannel.h names its base class without declaring it
 #include "../../lib/scopehal/scopehal/scopehal.h"
 #include "../../lib/scopehal/scopehal/ComplexChannel.h"
-#include "../../lib/scopehal/scopeprotocols/scopeprotocols.h"
+#include "../../lib/scopehal/scopeprotocols/Waterfall.h"
 
 #include "Verify.h"
 
@@ -174,12 +174,7 @@ bool VerifyComplexFFTFilter()
 	unique_ptr<ComplexChannel> chan(new ComplexChannel(
 		nullptr, "RX", "#4040ff", Unit(Unit::UNIT_FS), Unit(Unit::UNIT_VOLTS), 0));
 
-	auto filt = dynamic_cast<ComplexFFTFilter*>(Filter::CreateFilter("Complex FFT", "#ffffff"));
-	if(!filt)
-	{
-		LogError("Failed to create a Complex FFT filter\n");
-		return false;
-	}
+	auto filt = new ComplexFFTFilter("#ffffff");
 	filt->AddRef();
 	filt->SetInput("I", StreamDescriptor(chan.get(), 0));
 	filt->SetInput("Q", StreamDescriptor(chan.get(), 1));
@@ -480,12 +475,7 @@ bool VerifyPackedIQPath()
 	unique_ptr<ComplexChannel> chan(new ComplexChannel(
 		nullptr, "RX", "#4040ff", Unit(Unit::UNIT_FS), Unit(Unit::UNIT_VOLTS), 0));
 
-	auto filt = dynamic_cast<ComplexFFTFilter*>(Filter::CreateFilter("Complex FFT", "#ffffff"));
-	if(!filt)
-	{
-		LogError("Failed to create a Complex FFT filter\n");
-		return false;
-	}
+	auto filt = new ComplexFFTFilter("#ffffff");
 	filt->AddRef();
 	filt->SetInput("I", StreamDescriptor(chan.get(), 0));
 	filt->SetInput("Q", StreamDescriptor(chan.get(), 1));
@@ -676,8 +666,8 @@ static bool SpectrumPeakOfRecording(
 	}
 
 	auto chan = dynamic_cast<ComplexChannel*>(src.GetChannel(0));
-	auto filt = dynamic_cast<ComplexFFTFilter*>(Filter::CreateFilter("Complex FFT", "#ffffff"));
-	if(!filt || !chan)
+	auto filt = new ComplexFFTFilter("#ffffff");
+	if(!chan)
 		return false;
 	filt->AddRef();
 	filt->SetInput("I", StreamDescriptor(chan, 0));
