@@ -17,6 +17,7 @@
 #include <complex>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -24,6 +25,7 @@
 #include <gnuradio-4.0/Block.hpp>
 #include <gnuradio-4.0/BlockRegistry.hpp>
 
+#include <gnuradio-4.0/imcufosphor/detail/AnnotationsFromTags.hpp>
 #include <gnuradio-4.0/imcufosphor/detail/IqRing.hpp>
 #include <gnuradio-4.0/imcufosphor/detail/MetaFromTags.hpp>
 #include <gnuradio-4.0/imcufosphor/detail/StreamStatus.hpp>
@@ -178,9 +180,21 @@ the block runs headless: it consumes and drops samples without allocating anythi
 		Doc<"Throttle the upstream graph rather than dropping. Use for files, not for radios.">>
 		backpressure = false;
 
+	/**
+		@brief Draw SigMF annotations published by the source as stream tags
+
+		On by default. A stream that carries no annotation tags produces an empty set and the
+		overlay is never attached, so this costs a string compare per tag on a graph that has
+		none - and tags are per event, not per sample.
+	 */
+	A<bool, "annotations", Visible,
+		Doc<"Draw SigMF annotation tags over the spectrum and waterfall">>
+		annotations = true;
+
 	GR_MAKE_REFLECTABLE(AnalyzerSink, in, fft_size, block_size, group_size, sample_rate,
 		center_frequency, ignore_tag_sample_rate, sample_scale, window, db_min, db_max,
-		color_map, spectrum_fraction, timeout_ms, buffer_depth, step_budget_ms, backpressure);
+		color_map, spectrum_fraction, timeout_ms, buffer_depth, step_budget_ms, backpressure,
+		annotations);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// State
@@ -196,6 +210,9 @@ the block runs headless: it consumes and drops samples without allocating anythi
 	//   _metaRate, _metaCenter, _metaDirty  scheduler             render (top of draw)
 	//   _reconfigure                        scheduler + render    render
 	//   Annotated<> settings                scheduler (settings)  render (snapshot per frame)
+	//   _annotationStaging                  scheduler             render (drained under lock)
+	//   _annotationSet, _annotationScratch,
+	//   _annotationsAttached                render only           render only
 	//   _engine, _pane, _initialised,
 	//   _lastDraw                           render only           render only
 	//
@@ -203,6 +220,56 @@ the block runs headless: it consumes and drops samples without allocating anythi
 
 	///@brief The scheduler-to-renderer handoff. See detail/IqRing.hpp.
 	detail::IqRing<T> _ring;
+
+	/**
+		@brief Ceiling on annotations waiting to be picked up
+
+		The writer runs whether or not anything drains it: a headless flowgraph never calls
+		draw() at all. Without a bound that is an unbounded leak on any graph that has a
+		display block but no window.
+	 */
+	static constexpr std::size_t g_maxStagedAnnotations = 65536UZ;
+
+	/**
+		@brief Size at which the live set is pruned back to what the waterfall can still show
+
+		Not a hard limit on what is drawn - PruneAnnotations() keeps everything still on screen
+		however many that is - but the point at which it becomes worth walking the set to find
+		out. See PruneAnnotations().
+	 */
+	static constexpr std::size_t g_maxLiveAnnotations = 16384UZ;
+
+	/**
+		@brief Annotations converted on the scheduler thread, waiting to be picked up
+
+		A mutex here rather than another lock-free ring, and the difference from _ring is the
+		point: that one carries every sample and a lock held across a megasample copy shows up
+		directly as scheduler jitter. This carries one small struct per annotation *event*, so
+		the lock is taken a few times a second on a dense recording and not at all on a live
+		radio. Paying for a second SPSC queue to avoid it would be optimising the wrong thing.
+
+		Held only long enough to swap the vector with _annotationScratch, never across the
+		conversion or the sort.
+	 */
+	std::mutex _annotationMutex;
+	std::vector<::Annotation> _annotationStaging;
+
+	/**
+		@brief Annotations the overlay draws, in SpectrumEngine's stream coordinates
+
+		Render thread only. The pane holds a pointer to this, so it must outlive _pane - which
+		it does by being declared here and destroyed after it.
+	 */
+	::AnnotationSet _annotationSet;
+
+	///@brief Swapped with _annotationStaging so the drain allocates nothing in steady state
+	std::vector<::Annotation> _annotationScratch;
+
+	///@brief True once the set has been handed to the pane, which happens on the first arrival
+	bool _annotationsAttached = false;
+
+	///@brief Annotations refused because the staging buffer was full. Display only.
+	std::atomic<std::uint64_t> _annotationsDropped{0};
 
 	///@brief Latest tagged sample rate, or 0 if the stream has never tagged one
 	std::atomic<double> _metaRate{0.0};
@@ -302,6 +369,10 @@ the block runs headless: it consumes and drops samples without allocating anythi
 		_pane.reset();
 		_engine.reset();
 		_initialised = false;
+
+		//The pane held a pointer to _annotationSet. It is gone, so the next one built has to be
+		//given the set again rather than inheriting a flag saying it already has it.
+		_annotationsAttached = false;
 	}
 
 	//Deliberately no destructor. gr::Block runs a sequenced constructor that wires up
@@ -338,12 +409,18 @@ the block runs headless: it consumes and drops samples without allocating anythi
 
 		const std::span<const T> samples(dataIn.data(), n);
 
+		//Stream index this block's first sample will land on, read before the push advances the
+		//counter. Annotation tags are placed against it, so sampling it afterwards would put
+		//every annotation a whole block late.
+		const std::uint64_t streamBase = _ring.Pushed();
+
 		if(backpressure)
 		{
 			//Consume only what was accepted. What is left stays in the port, so the upstream
 			//block is asked for it again rather than having it thrown away - which for a file
 			//means the whole recording eventually gets analysed instead of a sample of it.
 			const std::size_t taken = _ring.PushUpTo(samples);
+			CollectAnnotations(dataIn.tags(), streamBase, taken);
 			std::ignore = dataIn.consume(taken);
 
 			//Back off briefly when the ring is full rather than returning straight away having
@@ -364,11 +441,62 @@ the block runs headless: it consumes and drops samples without allocating anythi
 		//block at a time, so partial writes are fine: the reader waits until one has
 		//accumulated.
 		_ring.Push(samples);
+		CollectAnnotations(dataIn.tags(), streamBase, _ring.Pushed() - streamBase);
 
 		//The whole span regardless. See the class doc: without backpressure the display can
 		//never stall the flowgraph.
 		std::ignore = dataIn.consume(n);
 		return work::Status::OK;
+	}
+
+	/**
+		@brief Converts this block's annotation tags and stages them for the render thread
+
+		Scheduler thread. @p accepted is how many of this block's samples actually reached the
+		ring, and a tag past that is skipped rather than clamped, because the samples it
+		describes are not going to be displayed:
+
+		- Backpressuring, the remainder stays in the port and the same tag arrives again next
+		  call with an index relative to the new span, so skipping loses nothing.
+		- Not backpressuring, those samples were dropped outright, and an annotation over
+		  samples nobody will see is worse than no annotation at all.
+	 */
+	template<typename TagRange>
+	void CollectAnnotations(TagRange&& tags, std::uint64_t streamBase, std::size_t accepted) noexcept
+	{
+		if(!annotations || (accepted == 0))
+			return;
+
+		for(const auto& entry : tags)
+		{
+			//Signed, and genuinely can be negative: the port reports a tag's index relative to
+			//the current stream position, and one published before it reads below zero.
+			const std::ptrdiff_t index = std::get<0>(entry);
+			if((index < 0) || (static_cast<std::size_t>(index) >= accepted))
+				continue;
+
+			const auto& map = std::get<1>(entry).get();
+			if(!detail::isAnnotationTag(map))
+				continue;
+
+			auto ann = detail::annotationFromTag(
+				map, static_cast<std::int64_t>(streamBase + static_cast<std::uint64_t>(index)));
+			if(!ann.has_value())
+				continue;
+
+			const std::lock_guard<std::mutex> lock(_annotationMutex);
+
+			//Bounded because the writer is faster than the reader by construction: a headless
+			//run never drains this at all, and a recording looping for an hour would otherwise
+			//stage every replay of every annotation forever.
+			if(_annotationStaging.size() >= g_maxStagedAnnotations)
+			{
+				_annotationsDropped.fetch_add(1, std::memory_order_relaxed);
+				continue;
+			}
+
+			_annotationStaging.push_back(std::move(*ann));
+		}
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -399,6 +527,10 @@ the block runs headless: it consumes and drops samples without allocating anythi
 			ApplyConfiguration();
 
 		_pane->SetSpectrumFraction(spectrum_fraction);
+
+		//Before Render(), because the overlay draws from the set inside it. Cheap when nothing
+		//arrived, which is every frame on a stream that has no annotations.
+		DrainAnnotations();
 
 		//timeout_ms rate-limits the GPU work, and nothing else.
 		//
@@ -460,6 +592,106 @@ the block runs headless: it consumes and drops samples without allocating anythi
 
 protected:
 	/**
+		@brief Moves staged annotations into the set the overlay draws from
+
+		Render thread. The set is attached to the pane on the first arrival rather than up
+		front: a graph with no annotation tags then leaves the pane exactly as it was, and
+		AnalyzerPane already treats a null set as "nothing to draw" rather than as an error.
+	 */
+	void DrainAnnotations()
+	{
+		//A per-frame snapshot, like SetSpectrumFraction above. AnnotationOverlay is constructed
+		//disabled - sigmf-spectrum turns it on from a checkbox in MainWindow - so a sink that
+		//never touched this would collect annotations correctly and draw none of them. Driving
+		//it from the setting every frame is also what makes the runtime checkbox work without a
+		//separate apply path; the collected set is kept either way, so switching it back on does
+		//not mean replaying the recording.
+		_pane->GetOverlay().SetEnabled(annotations);
+
+		if(!annotations)
+			return;
+
+		//The lock covers a vector swap and nothing else. Converting, sorting and pruning all
+		//happen outside it, so the scheduler thread is never blocked behind this frame's work.
+		_annotationScratch.clear();
+		{
+			const std::lock_guard<std::mutex> lock(_annotationMutex);
+			_annotationStaging.swap(_annotationScratch);
+		}
+
+		if(!_annotationScratch.empty())
+		{
+			for(const auto& a : _annotationScratch)
+				_annotationSet.Add(a);
+
+			//Add() invalidates the running-maximum prefix the overlap query binary searches, so
+			//this has to run before anything reads the set - i.e. before Render() below.
+			_annotationSet.Finalize();
+
+			PruneAnnotations();
+		}
+
+		if(!_annotationsAttached && !_annotationSet.empty())
+		{
+			//No RecordingClock. The second half of SetAnnotationSource is the wall clock a
+			//recording pins its samples to, and a stream arriving on a port has no equivalent -
+			//inventing one from the host's clock would date the data to when it was displayed.
+			//WaterfallArea null checks it and omits the timestamp from its hover readout.
+			_pane->SetAnnotationSource(&_annotationSet, nullptr);
+			_annotationsAttached = true;
+		}
+	}
+
+	/**
+		@brief Drops annotations that have scrolled past the oldest row the waterfall still holds
+
+		A repeating source republishes its entire annotation schedule on every wrap, so without
+		this the set grows for as long as the graph runs. dect6 carries 2000 annotations over ten
+		seconds, which is an ordinary recording rather than a pathological one; an hour of
+		looping it would otherwise be 720k annotations, every one of them queried per frame.
+
+		Cutting at the oldest row loses nothing that could have been drawn: the waterfall cannot
+		show a row it has already scrolled away, and the spectrum only ever draws the current
+		block.
+	 */
+	void PruneAnnotations()
+	{
+		if(_annotationSet.size() <= g_maxLiveAnnotations)
+			return;
+
+		auto& rows = _engine->GetRowHistory();
+		const std::size_t count = rows.GetCount();
+		if(count == 0)
+			return;
+
+		RowMark oldest;
+		if(!rows.GetRow(count - 1, oldest))
+			return;
+
+		_annotationScratch.clear();
+		for(std::size_t i=0; i<_annotationSet.size(); i++)
+		{
+			const auto& a = _annotationSet[i];
+
+			//EffectiveEnd rather than sampleEnd, so a zero length annotation is tested the same
+			//way the overlap query tests it and the two cannot disagree about what is visible.
+			if(AnnotationSet::EffectiveEnd(a) >= oldest.streamStart)
+				_annotationScratch.push_back(a);
+		}
+
+		//Everything is still on screen. That is a display holding more annotations than the cap
+		//expected, not a leak, and clearing the set would erase what is being looked at.
+		if(_annotationScratch.size() == _annotationSet.size())
+			return;
+
+		_annotationSet.Clear();
+		for(const auto& a : _annotationScratch)
+			_annotationSet.Add(a);
+		_annotationSet.Finalize();
+		_annotationScratch.clear();
+	}
+
+	/**
 		@brief The status line and the settings panel
 
 		Every control here writes back through settings().setStaged() rather than assigning the
@@ -470,11 +702,28 @@ protected:
 	 */
 	void RenderControls()
 	{
-		char detail[64] = "starting";
+		char detail[128] = "starting";
 		if(_engine)
 		{
-			snprintf(detail, sizeof(detail), "%" PRId64 " rows | %" PRId64 " spectra",
+			int len = snprintf(detail, sizeof(detail), "%" PRId64 " rows | %" PRId64 " spectra",
 				_engine->GetRowsPlayed(), _engine->GetStats().spectra);
+
+			//Only once there are any. A count of zero on every graph that has no annotations
+			//would be noise in the one line the user actually reads.
+			if((len > 0) && (len < static_cast<int>(sizeof(detail))) && !_annotationSet.empty())
+			{
+				const std::uint64_t lost = _annotationsDropped.load(std::memory_order_relaxed);
+				if(lost > 0)
+				{
+					snprintf(detail + len, sizeof(detail) - static_cast<size_t>(len),
+						" | %zu annotations (%" PRIu64 " dropped)", _annotationSet.size(), lost);
+				}
+				else
+				{
+					snprintf(detail + len, sizeof(detail) - static_cast<size_t>(len),
+						" | %zu annotations", _annotationSet.size());
+				}
+			}
 		}
 
 		detail::RenderStreamStatus(_status, _ring.Pushed(), _ring.Dropped(), detail);
@@ -529,6 +778,10 @@ protected:
 		bool bp = backpressure;
 		if(ImGui::Checkbox("Backpressure (files only)", &bp))
 			staged["backpressure"] = bp;
+
+		bool ann = annotations;
+		if(ImGui::Checkbox("Annotations", &ann))
+			staged["annotations"] = ann;
 
 		if(!staged.empty())
 			std::ignore = this->settings().setStaged(staged);

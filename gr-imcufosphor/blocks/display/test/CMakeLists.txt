@@ -12,6 +12,9 @@ target_link_libraries(qa_IqLayout PRIVATE gr_imcufosphor::blocks_display_headers
 gr_imcufosphor_add_ut_test(qa_MetaFromTags qa_MetaFromTags.cpp)
 target_link_libraries(qa_MetaFromTags PRIVATE gr_imcufosphor::blocks_display_headers)
 
+gr_imcufosphor_add_ut_test(qa_AnnotationsFromTags qa_AnnotationsFromTags.cpp)
+target_link_libraries(qa_AnnotationsFromTags PRIVATE gr_imcufosphor::blocks_display_headers)
+
 gr_imcufosphor_add_ut_test(qa_AnalyzerSink qa_AnalyzerSink.cpp)
 target_link_libraries(qa_AnalyzerSink PRIVATE gr_imcufosphor::blocks_display_headers)
 
