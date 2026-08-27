@@ -70,6 +70,47 @@ const suite<"annotation tag conversion"> annotationTests = [] {
 		expect(!isAnnotationTag(makeMap({{"sample_rate", 1.0e6f}})));
 	};
 
+	/**
+		@brief The second producer of the same tag shape
+
+		gr-omnisig's classifier publishes annotations in exactly this format but names its trigger
+		after itself, so that a consumer can tell a recording's stored metadata from a live
+		classification of the samples in front of it. The display has to accept both, and the
+		conversion below has to treat them identically - the tag is the same tag.
+	 */
+	"recognises the OmniSIG classifier's trigger too"_test = [] {
+		expect(isAnnotationTag(makeMap({
+			{"trigger_name", std::string(g_omnisigAnnotationTrigger)},
+			{"trigger_meta_info", makeMap({{"core:label", std::string("LTE")}})}})));
+
+		//Still an explicit list, not a suffix test: a future block naming a trigger
+		//"Something::annotation" for something that is not a SigMF annotation must not be drawn.
+		expect(!isAnnotationTag(makeMap({{"trigger_name", std::string("Whatever::annotation")}})));
+	};
+
+	"converts an OmniSIG annotation the same way as a SigMF one"_test = [] {
+		const auto tag = makeMap({
+			{"trigger_name", std::string(g_omnisigAnnotationTrigger)},
+			{"trigger_meta_info", makeMap({
+				{"core:sample_start", std::uint64_t{999999}},
+				{"core:sample_count", std::uint64_t{802816}},
+				{"core:freq_lower_edge", 2466907137.0},
+				{"core:freq_upper_edge", 2467879140.0},
+				{"core:label", std::string("LoRa")},
+				{"deepsig:confidence", 0.9156636595726013},
+			})}});
+
+		const auto ann = annotationFromTag(tag, 4096);
+		expect(ann.has_value()) >> fatal;
+
+		//Placed at the stream position, exactly as a SigMF source's annotation is. The classifier's
+		//core:sample_start is a position in the recording it was told about, not in this stream.
+		expect(eq(ann->sampleStart, std::int64_t{4096}));
+		expect(eq(ann->sampleEnd, std::int64_t{4096 + 802816}));
+		expect(ann->hasFreq);
+		expect(eq(ann->label, std::string("LoRa")));
+	};
+
 	"converts a fully populated annotation"_test = [] {
 		const auto tag = makeAnnotationTag({
 			{"core:sample_start", std::uint64_t{1000}},

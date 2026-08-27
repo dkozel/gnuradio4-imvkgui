@@ -12,6 +12,7 @@
 #define GR_IMCUFOSPHOR_ANNOTATIONS_FROM_TAGS_HPP
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -38,6 +39,26 @@ namespace gr::imcufosphor::detail {
 inline constexpr std::string_view g_sigmfAnnotationTrigger = "SigMFSource::annotation";
 
 /**
+	@brief Trigger name gr-omnisig's classifier publishes
+
+	A second producer of the same tag shape. gr-omnisig names its trigger after itself rather than
+	borrowing the SigMF source's name, and it is right to: a consumer that wants to know whether an
+	annotation came from a recording's stored metadata or from a live classification of the samples in
+	front of it has nowhere else to look.
+
+	Which is why this is an explicit list and not a prefix test. Exact matching is what keeps capture
+	tags out of the overlay, and that property is worth more than the convenience of matching anything
+	ending in "::annotation" - a name a future block could pick for something that is not a SigMF
+	annotation at all.
+ */
+inline constexpr std::string_view g_omnisigAnnotationTrigger = "OmniSIGClassifier::annotation";
+
+///@brief Every trigger name that carries a SigMF annotation in trigger_meta_info
+inline constexpr std::array<std::string_view, 2> g_annotationTriggers{
+	g_sigmfAnnotationTrigger,
+	g_omnisigAnnotationTrigger};
+
+/**
 	@brief Reads a string tag value
 
 	Kept beside tagValueAsDouble() for symmetry, but the type question is settled rather than
@@ -60,11 +81,14 @@ inline constexpr std::string_view g_sigmfAnnotationTrigger = "SigMFSource::annot
 	return std::nullopt;
 }
 
-///@brief True if this tag is a SigMF annotation
+///@brief True if this tag is a SigMF annotation, from any of the blocks that produce them
 [[nodiscard]] inline bool isAnnotationTag(const gr::property_map& tag)
 {
 	const auto name = stringFromTag(tag, gr::tag::TRIGGER_NAME.shortKey());
-	return name.has_value() && (*name == g_sigmfAnnotationTrigger);
+	if(!name.has_value())
+		return false;
+
+	return std::ranges::find(g_annotationTriggers, *name) != g_annotationTriggers.end();
 }
 
 /**

@@ -37,6 +37,10 @@
 #include <gnuradio-4.0/soapysdr/SoapyRx.hpp>
 #endif
 
+#ifdef GR4_ANALYZER_HAVE_OMNISIG
+#include <gnuradio-4.0/omnisig/OmniSIGClassifier.hpp>
+#endif
+
 #include <gnuradio-4.0/imcufosphor/AnalyzerSink.hpp>
 
 #include "Gr4AnalyzerWindow.h"
@@ -96,6 +100,23 @@ struct Options
 	///@brief -1 means "decide from the source kind"; 0/1 force it off/on
 	int backpressure = -1;
 
+	/**
+		@brief Insert the OmniSIG classifier between the source and the display
+
+		Its annotations arrive at the sink as ordinary stream tags, so the overlay draws them by the
+		same path it draws a recording's stored ones - there is no display-side plumbing for this.
+	 */
+	bool omnisig = false;
+
+	///@brief Custom .ds model for the classifier. Empty selects the built-in one.
+	string omnisigModel;
+
+	///@brief Compute device for the classifier: "" (auto), "cpu", "cuda:0"
+	string omnisigDevices;
+
+	///@brief Drop detections below this confidence
+	float omnisigConfidence = 0.0f;
+
 	//Soapy only
 	string device;
 	string deviceArgs;
@@ -148,6 +169,18 @@ void PrintUsage()
 	printf("                    a receiver overflow. A file has no realtime constraint, so\n");
 	printf("                    pacing it means the whole capture is analysed, not a sample.\n");
 	printf("  --device-args S   extra SoapySDR device arguments\n");
+	printf("\n");
+	printf("Classification:\n");
+	printf("  --omnisig         run the OmniSIG classifier on the stream. Its detections arrive at\n");
+	printf("                    the display as annotation tags and are drawn over the waterfall,\n");
+	printf("                    the same way a recording's stored annotations are.\n");
+	printf("  --omnisig-model PATH   a custom .ds model; omit for the built-in one\n");
+	printf("  --omnisig-device SPEC  '' (auto), 'cpu', 'cuda:0'\n");
+	printf("  --omnisig-confidence C drop detections below C, default 0\n");
+	printf("\n");
+	printf("                    The classifier works a whole frame at a time and the frame scales\n");
+	printf("                    with sample rate - 131072 samples at 40 MS/s, 802816 at 245.76 - so\n");
+	printf("                    a recording shorter than one frame produces no detections at all.\n");
 	printf("\n");
 	printf("Other:\n");
 	printf("  --tone HZ         tone offset from centre, synthetic source only, default 1.5e6\n");
@@ -211,6 +244,23 @@ bool ParseArgs(int argc, char* argv[], Options& opt)
 			opt.blockSize = static_cast<uint32_t>(stoul(argv[++i]));
 		else if((s == "--group") && (i + 1 < argc))
 			opt.groupSize = static_cast<uint32_t>(stoul(argv[++i]));
+		else if(s == "--omnisig")
+			opt.omnisig = true;
+		else if((s == "--omnisig-model") && (i + 1 < argc))
+		{
+			opt.omnisigModel = argv[++i];
+			opt.omnisig = true;
+		}
+		else if((s == "--omnisig-device") && (i + 1 < argc))
+		{
+			opt.omnisigDevices = argv[++i];
+			opt.omnisig = true;
+		}
+		else if((s == "--omnisig-confidence") && (i + 1 < argc))
+		{
+			opt.omnisigConfidence = stof(argv[++i]);
+			opt.omnisig = true;
+		}
 		else if(s == "--no-repeat")
 			opt.repeat = false;
 		else if((s == "--rate") && (i + 1 < argc))
@@ -316,6 +366,62 @@ int main(int argc, char* argv[])
 				: (opt.source == SourceKind::SigMF)},
 		});
 
+#ifdef GR4_ANALYZER_HAVE_OMNISIG
+		//Built before the source so that whichever branch below runs has something to connect to.
+		//emplaceBlock returns a reference into the graph's shared_ptr storage, so the address is
+		//stable across the move into the scheduler.
+		gr::omnisig::OmniSIGClassifier* classifier = nullptr;
+		if(opt.omnisig)
+		{
+			gr::property_map cfg{
+				{"name", std::string("omnisig")},
+				{"model_path", opt.omnisigModel},
+				{"devices", opt.omnisigDevices},
+				{"confidence_threshold", opt.omnisigConfidence},
+
+				//Blocking, deliberately, even for a live radio. Opportunistic mode exists so a
+				//classifier cannot stall a receiver, but it needs a paced source and a delay ring
+				//deep enough to outlast an inference, and neither is worth guessing at from here.
+				{"mode", std::string("blocking")},
+			};
+
+			//A SigMF recording tags its own rate and folds its centre frequency into the capture
+			//tag, and the classifier adopts both. The generator and SoapyRx tag neither, so for
+			//those these are the only way it learns them - and without a rate it builds no engine
+			//and classifies nothing.
+			if(opt.source != SourceKind::SigMF)
+			{
+				cfg["sample_rate"] = static_cast<float>(opt.sampleRate);
+				cfg["frequency"] = opt.centerHz;
+			}
+
+			classifier = &fg.emplaceBlock<gr::omnisig::OmniSIGClassifier>(cfg);
+			LogNotice("OmniSIG classifier enabled%s%s\n",
+				opt.omnisigModel.empty() ? "" : ", model ",
+				opt.omnisigModel.empty() ? "" : opt.omnisigModel.c_str());
+		}
+#else
+		if(opt.omnisig)
+		{
+			LogError("This build has no gr-omnisig support. Configure with "
+				"-DGR_OMNISIG_DIR=<gr-omnisig-install>/lib/cmake/gr_omnisig and rebuild.\n");
+			return 1;
+		}
+#endif
+
+		//The display is the end of the chain either way; only what sits in front of it changes
+		auto connectToDisplay = [&](auto& source)
+		{
+#ifdef GR4_ANALYZER_HAVE_OMNISIG
+			if(classifier != nullptr)
+			{
+				return fg.connect<"out", "in">(source, *classifier).has_value()
+					&& fg.connect<"out", "in">(*classifier, sink).has_value();
+			}
+#endif
+			return fg.connect<"out", "in">(source, sink).has_value();
+		};
+
 		bool connected = false;
 		switch(opt.source)
 		{
@@ -333,7 +439,7 @@ int main(int argc, char* argv[])
 
 				LogNotice("Synthetic source: %.6g Hz tone at %.6g S/s, axis centred on %.6g Hz\n",
 					opt.toneHz, opt.sampleRate, opt.centerHz);
-				connected = fg.connect<"out", "in">(src, sink).has_value();
+				connected = connectToDisplay(src);
 				break;
 			}
 
@@ -348,7 +454,7 @@ int main(int argc, char* argv[])
 				});
 
 				LogNotice("SigMF source: %s\n", opt.file.c_str());
-				connected = fg.connect<"out", "in">(src, sink).has_value();
+				connected = connectToDisplay(src);
 				break;
 			}
 
@@ -387,7 +493,7 @@ int main(int argc, char* argv[])
 					opt.device.empty() && opt.deviceArgs.empty() ? "(first device found)" : "",
 					opt.device.empty() ? opt.deviceArgs.c_str() : opt.device.c_str(),
 					opt.centerHz, opt.sampleRate, opt.gainDb);
-				connected = fg.connect<"out", "in">(src, sink).has_value();
+				connected = connectToDisplay(src);
 #else
 				LogError("This build has no SoapySDR support. Install libsoapysdr-dev and "
 					"reconfigure.\n");
