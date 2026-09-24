@@ -21,6 +21,8 @@ add_library(imcufosphor-core STATIC
 	IqInjector.cpp
 	PlayerSession.cpp
 	RecordingClock.cpp
+	ScopeCapture.cpp
+	ScopeTriggerEngine.cpp
 	SigMFSource.cpp
 	SpectrumDensity.cpp
 	SpectrumEngine.cpp
@@ -71,6 +73,7 @@ add_library(imcufosphor-render STATIC
 	AnnotationOverlay.cpp
 	PlotAxis.cpp
 	RenderHost.cpp
+	ScopeArea.cpp
 	SpectrumArea.cpp
 	WaterfallArea.cpp
 	)
@@ -107,6 +110,11 @@ imcufosphor_header_selfcheck(imcufosphor-render-headercheck imcufosphor-render
 		${CMAKE_CURRENT_SOURCE_DIR}/RecordingClock.h
 		${CMAKE_CURRENT_SOURCE_DIR}/RenderHost.h
 		${CMAKE_CURRENT_SOURCE_DIR}/RowHistory.h
+		${CMAKE_CURRENT_SOURCE_DIR}/ScopeArea.h
+		${CMAKE_CURRENT_SOURCE_DIR}/ScopeCapture.h
+		${CMAKE_CURRENT_SOURCE_DIR}/ScopeHistory.h
+		${CMAKE_CURRENT_SOURCE_DIR}/ScopeTrigger.h
+		${CMAKE_CURRENT_SOURCE_DIR}/ScopeTriggerEngine.h
 		${CMAKE_CURRENT_SOURCE_DIR}/SigMFSource.h
 		${CMAKE_CURRENT_SOURCE_DIR}/SpectrumArea.h
 		${CMAKE_CURRENT_SOURCE_DIR}/SpectrumDensity.h

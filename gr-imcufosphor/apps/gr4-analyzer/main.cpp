@@ -31,6 +31,7 @@
 
 #include <gnuradio-4.0/Graph.hpp>
 #include <gnuradio-4.0/Scheduler.hpp>
+#include <gnuradio-4.0/basic/ClockSource.hpp>
 #include <gnuradio-4.0/basic/SignalGenerator.hpp>
 #include <gnuradio-4.0/sigmf/SigMfSource.hpp>
 #ifdef GR4_ANALYZER_HAVE_SOAPYSDR
@@ -42,6 +43,7 @@
 #endif
 
 #include <gnuradio-4.0/imcufosphor/AnalyzerSink.hpp>
+#include <gnuradio-4.0/imcufosphor/ScopeSink.hpp>
 
 #include "Gr4AnalyzerWindow.h"
 #include "RenderHost.h"
@@ -101,6 +103,31 @@ struct Options
 	int backpressure = -1;
 
 	/**
+		@brief Show the time domain scope instead of the spectrum and waterfall
+
+		A different display, not an extra pane: the two answer different questions and the scope
+		needs none of the FFT machinery in front of it.
+	 */
+	bool scope = false;
+
+	/**
+		@brief Input ports on the scope
+
+		Only the synthetic source can fill more than one, because it is the only one that can be
+		instantiated more than once with something different on each. A recording or a radio is
+		one stream, and fanning it out to several ports would draw the same trace twice.
+	 */
+	uint32_t scopeChannels = 1;
+
+	uint32_t recordLength = 16384;
+	float triggerLevel = 0.0f;
+	string triggerMode = "auto";
+	string triggerSlope = "rising";
+	string triggerOperator = "raw";
+	float pretrigger = 0.5f;
+	float voltsPerDiv = 0.25f;
+
+	/**
 		@brief Insert the OmniSIG classifier between the source and the display
 
 		Its annotations arrive at the sink as ordinary stream tags, so the overlay draws them by the
@@ -144,6 +171,25 @@ void PrintUsage()
 	printf("  --fft N           transform length, default 8192\n");
 	printf("  --block N         IQ samples per GPU submit, default 1048576\n");
 	printf("  --group N         spectra per waterfall row, default 1\n");
+	printf("\n");
+	printf("Time domain scope, instead of the spectrum and waterfall:\n");
+	printf("  --scope           show a triggered oscilloscope plot. Each complex port draws two\n");
+	printf("                    traces, I and Q, overlaid on one graticule.\n");
+	printf("  --scope-channels N  input ports, default 1. Only the synthetic source can fill\n");
+	printf("                    more than one; it generates a different tone on each.\n");
+	printf("  --record N        samples per acquisition, default 16384\n");
+	printf("  --pretrigger F    fraction of the record before the trigger, default 0.5\n");
+	printf("  --trigger MODE    stop | auto | normal | single, default auto\n");
+	printf("  --trigger-level L threshold in input units, default 0\n");
+	printf("  --trigger-slope S rising | falling | any, default rising\n");
+	printf("  --trigger-on WHAT raw | magnitude. 'magnitude' triggers on |I+jQ|, which is what\n");
+	printf("                    catches the start of a burst rather than a carrier zero crossing.\n");
+	printf("  --volts-per-div V full scale is eight divisions, default 0.25\n");
+	printf("\n");
+	printf("                    In the pane: drag and wheel pan and zoom the time axis;\n");
+	printf("                    ctrl+drag and ctrl+wheel move and scale vertically. The channel\n");
+	printf("                    selector says what the vertical controls act on - 'all' by\n");
+	printf("                    default, or one trace when two channels differ in amplitude.\n");
 	printf("\n");
 	printf("Tuning, for --soapy (requested from the radio) and --rate/--center for the\n");
 	printf("generator (where they only synthesize and label):\n");
@@ -277,6 +323,48 @@ bool ParseArgs(int argc, char* argv[], Options& opt)
 			opt.backpressure = 1;
 		else if(s == "--no-backpressure")
 			opt.backpressure = 0;
+		else if(s == "--scope")
+			opt.scope = true;
+		else if((s == "--scope-channels") && (i + 1 < argc))
+		{
+			opt.scopeChannels = stoul(argv[++i]);
+			opt.scope = true;
+		}
+		else if((s == "--record") && (i + 1 < argc))
+		{
+			opt.recordLength = stoul(argv[++i]);
+			opt.scope = true;
+		}
+		else if((s == "--pretrigger") && (i + 1 < argc))
+		{
+			opt.pretrigger = stof(argv[++i]);
+			opt.scope = true;
+		}
+		else if((s == "--trigger") && (i + 1 < argc))
+		{
+			opt.triggerMode = argv[++i];
+			opt.scope = true;
+		}
+		else if((s == "--trigger-level") && (i + 1 < argc))
+		{
+			opt.triggerLevel = stof(argv[++i]);
+			opt.scope = true;
+		}
+		else if((s == "--trigger-slope") && (i + 1 < argc))
+		{
+			opt.triggerSlope = argv[++i];
+			opt.scope = true;
+		}
+		else if((s == "--trigger-on") && (i + 1 < argc))
+		{
+			opt.triggerOperator = argv[++i];
+			opt.scope = true;
+		}
+		else if((s == "--volts-per-div") && (i + 1 < argc))
+		{
+			opt.voltsPerDiv = stof(argv[++i]);
+			opt.scope = true;
+		}
 		else if((s == "--help") || (s == "-h"))
 			return false;
 		else
@@ -339,10 +427,37 @@ int main(int argc, char* argv[])
 
 		using TSample = complex<float>;
 		using TSink = gr::imcufosphor::AnalyzerSink<TSample>;
+		using TScopeSink = gr::imcufosphor::ScopeSink<TSample>;
 
 		gr::Graph fg;
 
-		auto& sink = fg.emplaceBlock<TSink>({
+		//Exactly one of these is built. Pointers rather than a variant because everything below
+		//only ever asks "which one is it" twice, at connect and at teardown.
+		TSink* sink = nullptr;
+		TScopeSink* scopeSink = nullptr;
+
+		if(opt.scope)
+		{
+			scopeSink = &fg.emplaceBlock<TScopeSink>({
+				{"name", "scope"},
+				{"n_inputs", gr::Size_t{opt.scopeChannels}},
+				{"record_length", gr::Size_t{opt.recordLength}},
+				{"pretrigger", opt.pretrigger},
+
+				//Only used until the stream tags a rate. A SigMF recording does; the generator
+				//and SoapyRx do not, so for those this is the whole time base.
+				{"sample_rate", static_cast<float>(opt.sampleRate)},
+
+				{"trigger_mode", opt.triggerMode},
+				{"trigger_slope", opt.triggerSlope},
+				{"trigger_operator", opt.triggerOperator},
+				{"trigger_level", opt.triggerLevel},
+				{"volts_per_div", opt.voltsPerDiv},
+			});
+		}
+		else
+		{
+		sink = &fg.emplaceBlock<TSink>({
 			{"name", "analyzer"},
 			{"fft_size", gr::Size_t{opt.fftSize}},
 			{"block_size", gr::Size_t{opt.blockSize}},
@@ -365,6 +480,23 @@ int main(int argc, char* argv[])
 				? (opt.backpressure != 0)
 				: (opt.source == SourceKind::SigMF)},
 		});
+		}
+
+		if(opt.scope && opt.omnisig)
+		{
+			LogError("--omnisig annotates a spectrum display; it has nothing to draw on a scope\n");
+			return 1;
+		}
+
+		//Only the synthetic source can be instantiated once per port with something different on
+		//each. Fanning a recording or a radio out to several ports would draw the same trace N
+		//times, which is not multi-channel, it is one channel drawn wrong.
+		if(opt.scope && (opt.scopeChannels > 1) && (opt.source != SourceKind::Synthetic))
+		{
+			LogError("--scope-channels above 1 needs the synthetic source; a recording or a radio "
+				"is one stream\n");
+			return 1;
+		}
 
 #ifdef GR4_ANALYZER_HAVE_OMNISIG
 		//Built before the source so that whichever branch below runs has something to connect to.
@@ -410,16 +542,25 @@ int main(int argc, char* argv[])
 #endif
 
 		//The display is the end of the chain either way; only what sits in front of it changes
-		auto connectToDisplay = [&](auto& source)
+		auto connectToDisplay = [&](auto& source, size_t port = 0)
 		{
+			//The scope's ports are a std::vector, and the compile-time connect<> is a hard error
+			//on those (Graph.hpp:594-596). The runtime form with a "name#index" spelling is the
+			//only way to reach one.
+			if(scopeSink != nullptr)
+			{
+				return fg.connect(source, "out", *scopeSink, "in#" + std::to_string(port))
+					.has_value();
+			}
+
 #ifdef GR4_ANALYZER_HAVE_OMNISIG
 			if(classifier != nullptr)
 			{
 				return fg.connect<"out", "in">(source, *classifier).has_value()
-					&& fg.connect<"out", "in">(*classifier, sink).has_value();
+					&& fg.connect<"out", "in">(*classifier, *sink).has_value();
 			}
 #endif
-			return fg.connect<"out", "in">(source, sink).has_value();
+			return fg.connect<"out", "in">(source, *sink).has_value();
 		};
 
 		bool connected = false;
@@ -429,17 +570,74 @@ int main(int argc, char* argv[])
 			{
 				//The quickest demonstration that the whole path works, and the one that needs
 				//nothing on disk and nothing attached.
-				auto& src = fg.emplaceBlock<gr::blocks::basic::SignalGenerator<TSample>>({
-					{"name", "tone"},
-					{"sample_rate", static_cast<float>(opt.sampleRate)},
-					{"signal_type", "Sin"},
-					{"frequency", static_cast<float>(opt.toneHz)},
-					{"amplitude", 1.0f},
-				});
+				//
+				//One generator per scope port, each an octave above the last, so that a
+				//multi-channel scope shows channels that are visibly different and visibly
+				//related - which is what makes a misalignment between them obvious rather than
+				//plausible. Every other consumer takes exactly one.
+				const size_t nports = (scopeSink != nullptr) ? opt.scopeChannels : 1;
+				connected = true;
 
-				LogNotice("Synthetic source: %.6g Hz tone at %.6g S/s, axis centred on %.6g Hz\n",
-					opt.toneHz, opt.sampleRate, opt.centerHz);
-				connected = connectToDisplay(src);
+				//Two things here are not cosmetic.
+				//
+				//FastSin rather than Sin. ToneGenerator computes Sin as sin(omega * _currentTime)
+				//where _currentTime is a float accumulated one tick at a time
+				//(algorithm/signal/ToneGenerator.hpp:225). Once it reaches about 1.5 s the float
+				//epsilon there (1.19e-7) exceeds the tick, the accumulator stops advancing, and
+				//every subsequent sample is identical. Measured: the first duplicate lands at
+				//sample 15,067,501 at any rate, which at 10 MS/s is a second and a half.
+				//
+				//A spectrum display survives that - a frozen tone is still a tone. A scope does
+				//not: a run of equal samples contains no level crossing at all, so the trigger
+				//correctly never fires and the display looks hung. FastSin advances a recursive
+				//phasor instead, renormalised every 65536 samples, and never degenerates:
+				//zero duplicates in 40 M samples at 40 MS/s.
+				//
+				//And a ClockSource, which is how gnuradio4 intends a SignalGenerator to be driven
+				//(basic/test/qa_sources.cpp:181-186). Unclocked it free-runs as fast as the
+				//scheduler will call it - a few million samples a second in three- to five-sample
+				//chunks, of which the display then discards 99.5%. Clocked, the stream actually
+				//arrives at --rate, which is the only way the time axis means anything.
+				const gr::Size_t chunk = 8192;
+
+				for(size_t i = 0; i < nports; i++)
+				{
+					const double tone = opt.toneHz * static_cast<double>(1u << i);
+
+					auto& clk = fg.emplaceBlock<gr::blocks::basic::ClockSource<std::uint8_t>>({
+						{"name", "clock" + std::to_string(i)},
+						{"sample_rate", static_cast<float>(opt.sampleRate)},
+						{"chunk_size", chunk},
+
+						//Zero is unlimited. The default is 1024, which would stop the graph after
+						//a millisecond and look exactly like a crash.
+						{"n_samples_max", gr::Size_t{0}},
+					});
+
+					auto& src = fg.emplaceBlock<gr::blocks::basic::SignalGenerator<TSample>>({
+						{"name", "tone" + std::to_string(i)},
+						{"sample_rate", static_cast<float>(opt.sampleRate)},
+						{"chunk_size", chunk},
+						{"signal_type", "FastSin"},
+						{"frequency", static_cast<float>(tone)},
+						{"amplitude", 1.0f / static_cast<float>(i + 1)},
+					});
+
+					if(!fg.connect<"out", "clk_in">(clk, src).has_value())
+					{
+						connected = false;
+						break;
+					}
+
+					LogNotice("Synthetic source %zu: %.6g Hz tone at %.6g S/s (clocked), "
+						"axis centred on %.6g Hz\n", i, tone, opt.sampleRate, opt.centerHz);
+
+					if(!connectToDisplay(src, i))
+					{
+						connected = false;
+						break;
+					}
+				}
 				break;
 			}
 
@@ -555,17 +753,38 @@ int main(int argc, char* argv[])
 					frames = 0;
 					lastReport = now;
 
-					const auto pushed = sink._ring.Pushed();
-					const auto dropped = sink._ring.Dropped();
-
-					if(sink._engine)
+					if(scopeSink != nullptr)
 					{
-						const auto& stats = sink._engine->GetStats();
+						const auto accepted = scopeSink->_accepted.load();
+						const auto dropped = scopeSink->_dropped.load();
+
+						if(scopeSink->_capture)
+						{
+							const auto& trig = scopeSink->_capture->GetTriggerEngine();
+							LogNotice("%5.1f fps  %s  sweeps %" PRIu64 "  missed %" PRIu64
+								"  frame %.1f ms  accepted %" PRIu64 "  dropped %" PRIu64 "\n",
+								fps, trig.GetStateText(), trig.GetCaptureCount(),
+								trig.GetMissedCount(), window.GetLastRenderMs(), accepted, dropped);
+						}
+						else
+						{
+							LogNotice("no GPU work yet: accepted %" PRIu64 " dropped %" PRIu64 "\n",
+								accepted, dropped);
+						}
+					}
+					else
+					{
+					const auto pushed = sink->_ring.Pushed();
+					const auto dropped = sink->_ring.Dropped();
+
+					if(sink->_engine)
+					{
+						const auto& stats = sink->_engine->GetStats();
 						LogNotice("%5.1f fps  rows %" PRId64 "  drain %zu steps/%.1f ms  "
 							"tonemap %.1f ms  frame %.1f ms  buffered %" PRIu64
 							"  dropped %" PRIu64 "\n",
-							fps, sink._engine->GetRowsPlayed(),
-							sink._lastDrainSteps, sink._lastDrainMs, sink._lastToneMapMs,
+							fps, sink->_engine->GetRowsPlayed(),
+							sink->_lastDrainSteps, sink->_lastDrainMs, sink->_lastToneMapMs,
 							window.GetLastRenderMs(), pushed, dropped);
 						std::ignore = stats;
 					}
@@ -573,6 +792,7 @@ int main(int argc, char* argv[])
 					{
 						LogNotice("no GPU work yet: buffered %" PRIu64 " dropped %" PRIu64 "\n",
 							pushed, dropped);
+					}
 					}
 				}
 			}
@@ -584,7 +804,10 @@ int main(int argc, char* argv[])
 
 		//Scheduler joined. The blocks still exist and still hold GPU resources, and this is the
 		//render thread, so this is the one place they can be released correctly.
-		sink.ReleaseGpuResources();
+		if(scopeSink != nullptr)
+			scopeSink->ReleaseGpuResources();
+		else
+			sink->ReleaseGpuResources();
 
 		//Before the window dies, so no draw() can run against a half-destroyed window
 		imcufosphor::globalRenderHost().Retract();

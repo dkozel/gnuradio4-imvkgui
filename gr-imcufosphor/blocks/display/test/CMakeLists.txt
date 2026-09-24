@@ -20,3 +20,17 @@ target_link_libraries(qa_AnalyzerSink PRIVATE gr_imcufosphor::blocks_display_hea
 
 gr_imcufosphor_add_ut_test(qa_SinglePaneSinks qa_SinglePaneSinks.cpp)
 target_link_libraries(qa_SinglePaneSinks PRIVATE gr_imcufosphor::blocks_display_headers)
+
+# The scope's capture path was split so that everything which decides what a record contains
+# lives on the device-free side of AcceleratorBuffer's constructor. These two drive that side.
+gr_imcufosphor_add_ut_test(qa_ScopeHistory qa_ScopeHistory.cpp)
+target_link_libraries(qa_ScopeHistory PRIVATE gr_imcufosphor::blocks_display_headers)
+
+gr_imcufosphor_add_ut_test(qa_ScopeTrigger qa_ScopeTrigger.cpp)
+target_link_libraries(qa_ScopeTrigger PRIVATE gr_imcufosphor::blocks_display_headers)
+
+gr_imcufosphor_add_ut_test(qa_ScopeSink qa_ScopeSink.cpp)
+target_link_libraries(qa_ScopeSink PRIVATE gr_imcufosphor::blocks_display_headers)
+
+gr_imcufosphor_add_ut_test(qa_IqRing qa_IqRing.cpp)
+target_link_libraries(qa_IqRing PRIVATE gr_imcufosphor::blocks_display_headers)

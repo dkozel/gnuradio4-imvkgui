@@ -193,8 +193,9 @@ void GenerateAxisTicks(
 	@param axis		Axis to draw
 	@param pos		Top left corner, in screen coordinates
 	@param size		Extent of the ruler. Ticks hang down from the top edge.
+	@param uniformPrefix	See @ref DrawVerticalRuler
  */
-void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size);
+void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size, bool uniformPrefix = false);
 
 /**
 	@brief Draws a vertical ruler with the axis increasing upward
@@ -206,8 +207,25 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size);
 	@param axis		Axis to draw
 	@param pos		Top left corner, in screen coordinates
 	@param size		Extent of the ruler
+	@param uniformPrefix	One SI prefix for the whole ruler, chosen from its span, instead of
+							one per label
+
+	@par What uniformPrefix is for
+
+	Unit::PrettyPrint() picks its prefix from the value it is given, so a ruler whose labels span
+	decades reads "0.000 fs", "-200.0 ms", "-1.200 s" - three different units on one axis, and a
+	zero tick claiming femtosecond resolution. Harmless on the spectrum display, where the span
+	rarely crosses a decade; unreadable on a time axis, which crosses zero by construction.
+
+	With this set, labels go through Unit::PrettyPrintRange() against a window a couple of
+	thousandths of a graduation wide. That is narrow enough to round-trip the tick value exactly
+	and wide enough for the digit trimming to drop the trailing noise, so a 100 us graduation
+	reads "-500 us ... 0 us ... 500 us" and a 400 ns one reads "-0.8 us" rather than switching
+	units halfway along.
+
+	Off by default so the existing displays are untouched.
  */
-void DrawVerticalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size);
+void DrawVerticalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size, bool uniformPrefix = false);
 
 ///@brief Width to reserve for a vertical ruler, matching WaveformGroup::GetYAxisWidth()
 float GetVerticalRulerWidth();

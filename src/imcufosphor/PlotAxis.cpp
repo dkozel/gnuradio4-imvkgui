@@ -142,7 +142,89 @@ float GetHorizontalRulerGap()
 	return 4;
 }
 
-void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
+/**
+	@brief Spacing between labelled ticks, or zero if fewer than two were generated
+
+	Taken from the ticks rather than recomputed, so a label window derived from it cannot
+	disagree with the graduation it is describing.
+ */
+static double MajorTickStep(const vector<AxisTick>& ticks)
+{
+	const AxisTick* first = nullptr;
+	for(auto& t : ticks)
+	{
+		if(!t.major)
+			continue;
+		if(first == nullptr)
+			first = &t;
+		else
+			return fabs(t.value - first->value);
+	}
+	return 0;
+}
+
+/**
+	@brief Replaces the micro prefix with an ASCII 'u', in place
+
+	Unit.cpp spells micro as U+03BC, GREEK SMALL LETTER MU (Unit.cpp:320). ImGui's built-in font
+	is ProggyClean, which has no glyph for it and draws it as a question mark - so a time ruler
+	reads "-200 ?s" rather than "-200 us".
+
+	Substituting here rather than widening the font's glyph range because the range is not the
+	problem: the font contains no mu at any code point, so covering more of Unicode would need a
+	different font shipped with the application. 'us' is what every oscilloscope that cannot draw
+	a mu has always printed.
+
+	This is the only non-ASCII prefix Unit produces. The unit @em suffixes can also be non-ASCII
+	(ohms, degrees), but nothing here uses those.
+ */
+static void AsciifyMicro(string& s)
+{
+	for(size_t i = 0; (i + 1) < s.size(); )
+	{
+		if( (static_cast<unsigned char>(s[i]) == 0xce) &&
+			(static_cast<unsigned char>(s[i+1]) == 0xbc) )
+		{
+			s.replace(i, 2, "u");
+			i++;
+		}
+		else
+			i++;
+	}
+}
+
+/**
+	@brief Formats one tick, either per value or against the whole ruler's span
+
+	@param axis		Axis being labelled
+	@param value	Tick value
+	@param sigfigs	Significant figures for the per-value form
+	@param lo		Value at the start of the ruler
+	@param hi		Value at the end of it
+	@param step		Graduation size, or zero if it could not be determined
+ */
+static string FormatTick(
+	const PlotAxis& axis, double value, int sigfigs, double lo, double hi, double step)
+{
+	string label;
+
+	if(step <= 0)
+		label = axis.GetUnit().PrettyPrint(value, sigfigs);
+	else
+	{
+		//A couple of thousandths of a graduation: narrow enough that the trimming keeps every
+		//digit that distinguishes this tick from its neighbours, wide enough that it drops the
+		//"%.5f" tail. Measured against the awkward cases - a 250 ms graduation on a 1.5 s span,
+		//and a 400 ns one straddling zero - rather than guessed.
+		const double window = step * 0.005;
+		label = axis.GetUnit().PrettyPrintRange(value - window, value + window, lo, hi);
+	}
+
+	AsciifyMicro(label);
+	return label;
+}
+
+void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size, bool uniformPrefix)
 {
 	//The gap comes out of the ruler's own height, not out of the plot above it: a baseline
 	//drawn exactly on the boundary straddles it and eats the bottom row of the image, and
@@ -160,6 +242,10 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 	//Labels need room for a number and a unit suffix
 	vector<AxisTick> ticks;
 	GenerateAxisTicks(axis, size.x, 6 * fontSize, ticks);
+
+	const double step = uniformPrefix ? MajorTickStep(ticks) : 0;
+	const double spanLo = axis.PositionToUnits(0);
+	const double spanHi = axis.PositionToUnits(size.x);
 
 	//Baseline along the top, with ticks hanging below it
 	list->AddLine(ImVec2(pos.x, top), ImVec2(pos.x + size.x, top), color, 1.5f);
@@ -179,7 +265,7 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 		if(!t.major)
 			continue;
 
-		auto label = axis.GetUnit().PrettyPrint(t.value, 4);
+		auto label = FormatTick(axis, t.value, 4, spanLo, spanHi, step);
 		auto textSize = ImGui::CalcTextSize(label.c_str());
 
 		//Centre the label on its tick, but keep it inside the ruler at both ends rather than
@@ -192,7 +278,7 @@ void DrawHorizontalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 	}
 }
 
-void DrawVerticalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
+void DrawVerticalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size, bool uniformPrefix)
 {
 	if( (size.x <= 0) || (size.y <= 0) )
 		return;
@@ -203,6 +289,10 @@ void DrawVerticalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 
 	vector<AxisTick> ticks;
 	GenerateAxisTicks(axis, size.y, 2.5 * fontSize, ticks);
+
+	const double step = uniformPrefix ? MajorTickStep(ticks) : 0;
+	const double spanLo = axis.PositionToUnits(0);
+	const double spanHi = axis.PositionToUnits(size.y);
 
 	//Baseline down the left edge, ticks pointing right into the gutter
 	list->AddLine(pos, ImVec2(pos.x, pos.y + size.y), color, 1.5f);
@@ -223,7 +313,7 @@ void DrawVerticalRuler(const PlotAxis& axis, ImVec2 pos, ImVec2 size)
 		if(!t.major)
 			continue;
 
-		auto label = axis.GetUnit().PrettyPrint(t.value, 3);
+		auto label = FormatTick(axis, t.value, 3, spanLo, spanHi, step);
 		auto textSize = ImGui::CalcTextSize(label.c_str());
 
 		float ty = y - textSize.y/2;

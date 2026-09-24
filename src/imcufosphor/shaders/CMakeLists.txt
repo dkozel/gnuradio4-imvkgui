@@ -36,6 +36,7 @@ add_compute_shaders(
 	SOURCES
 		ComplexToLogMagnitudeShifted.glsl
 		PackedComplexWindow.glsl
+		ScopeTraceToneMap.glsl
 		SpectrumDensityAccumulate.glsl
 		SpectrumDensityFold.glsl
 		SpectrumDensityToneMap.glsl
