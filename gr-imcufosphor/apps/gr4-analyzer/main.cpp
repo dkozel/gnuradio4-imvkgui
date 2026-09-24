@@ -390,38 +390,23 @@ int main(int argc, char* argv[])
 
 	g_log_sinks.emplace(g_log_sinks.begin(), new ColoredSTDLogSink(Severity::NOTICE));
 
-	//false: do not skip GLFW. We need a WSI-capable device, and one device serves both the
-	//compute pipeline and the window.
 	if(!VulkanInit(false))
 	{
 		LogError("Failed to initialize Vulkan\n");
 		return 1;
 	}
 
-	//DriverStaticInit() is three lines of initialization we genuinely depend on followed by
-	//about a hundred AddDriverClass calls for instruments this application will never open, so
-	//call the three directly. InitializeSearchPaths() is what makes FindDataFile() resolve
-	//shaders/*.spv next to the binary; DetectCPUFeatures() sets the g_has* flags that inline
-	//code in scopehal's headers reads; Unit::InitializeLocales() is required before any
-	//PrettyPrint(). TransportStaticInit() registers twelve SCPI transports and
-	//InitializePlugins() dlopens whatever it finds in /usr/lib/scopehal/plugins, neither of
-	//which has anything to offer a file player.
 	InitializeSearchPaths();
 	DetectCPUFeatures();
 	Unit::InitializeLocales();
 
 	int rc = 1;
 
-	//Scoped so that everything holding a Vulkan object is destroyed before
-	//ScopehalStaticCleanup(). DESIGN.md section 17 records the teardown fault this prevents.
 	{
 		auto queue = g_vkQueueManager->GetQueueFromPool(
 			QueueManager::QUEUE_POOL_RENDER, "gr4-analyzer.render");
 		Gr4AnalyzerWindow window(queue);
 
-		//Published before the graph is built, so that a block's first draw() finds it. Nothing
-		//reads it until then - construction happens on whatever thread emplaceBlock runs on,
-		//and touches no GPU state.
 		imcufosphor::globalRenderHost().Publish(
 			window.GetTextureManager(), queue, window.GetDpiScale());
 
@@ -431,8 +416,6 @@ int main(int argc, char* argv[])
 
 		gr::Graph fg;
 
-		//Exactly one of these is built. Pointers rather than a variant because everything below
-		//only ever asks "which one is it" twice, at connect and at teardown.
 		TSink* sink = nullptr;
 		TScopeSink* scopeSink = nullptr;
 
@@ -443,9 +426,6 @@ int main(int argc, char* argv[])
 				{"n_inputs", gr::Size_t{opt.scopeChannels}},
 				{"record_length", gr::Size_t{opt.recordLength}},
 				{"pretrigger", opt.pretrigger},
-
-				//Only used until the stream tags a rate. A SigMF recording does; the generator
-				//and SoapyRx do not, so for those this is the whole time base.
 				{"sample_rate", static_cast<float>(opt.sampleRate)},
 
 				{"trigger_mode", opt.triggerMode},
@@ -462,20 +442,12 @@ int main(int argc, char* argv[])
 			{"fft_size", gr::Size_t{opt.fftSize}},
 			{"block_size", gr::Size_t{opt.blockSize}},
 			{"group_size", gr::Size_t{opt.groupSize}},
-
-			//Only used until the stream tags a rate and a centre frequency. A SigMF recording
-			//tags both; the signal generator and SoapyRx tag neither, so for those these are
-			//the whole story.
 			{"sample_rate", static_cast<float>(opt.sampleRate)},
 			{"center_frequency", opt.centerHz},
 
 			{"db_min", opt.dbMin},
 			{"db_max", opt.dbMax},
 
-			//On for a recording, off for anything live. A file has no realtime constraint, so
-			//pacing it by the display costs nothing and means the whole capture is analysed
-			//rather than whatever fraction the display happened to catch. A radio is the
-			//opposite: throttling it turns dropped frames into receiver overflows.
 			{"backpressure", (opt.backpressure >= 0)
 				? (opt.backpressure != 0)
 				: (opt.source == SourceKind::SigMF)},
@@ -488,9 +460,6 @@ int main(int argc, char* argv[])
 			return 1;
 		}
 
-		//Only the synthetic source can be instantiated once per port with something different on
-		//each. Fanning a recording or a radio out to several ports would draw the same trace N
-		//times, which is not multi-channel, it is one channel drawn wrong.
 		if(opt.scope && (opt.scopeChannels > 1) && (opt.source != SourceKind::Synthetic))
 		{
 			LogError("--scope-channels above 1 needs the synthetic source; a recording or a radio "
@@ -499,9 +468,6 @@ int main(int argc, char* argv[])
 		}
 
 #ifdef GR4_ANALYZER_HAVE_OMNISIG
-		//Built before the source so that whichever branch below runs has something to connect to.
-		//emplaceBlock returns a reference into the graph's shared_ptr storage, so the address is
-		//stable across the move into the scheduler.
 		gr::omnisig::OmniSIGClassifier* classifier = nullptr;
 		if(opt.omnisig)
 		{
@@ -510,17 +476,9 @@ int main(int argc, char* argv[])
 				{"model_path", opt.omnisigModel},
 				{"devices", opt.omnisigDevices},
 				{"confidence_threshold", opt.omnisigConfidence},
-
-				//Blocking, deliberately, even for a live radio. Opportunistic mode exists so a
-				//classifier cannot stall a receiver, but it needs a paced source and a delay ring
-				//deep enough to outlast an inference, and neither is worth guessing at from here.
 				{"mode", std::string("blocking")},
 			};
 
-			//A SigMF recording tags its own rate and folds its centre frequency into the capture
-			//tag, and the classifier adopts both. The generator and SoapyRx tag neither, so for
-			//those these are the only way it learns them - and without a rate it builds no engine
-			//and classifies nothing.
 			if(opt.source != SourceKind::SigMF)
 			{
 				cfg["sample_rate"] = static_cast<float>(opt.sampleRate);
@@ -541,12 +499,8 @@ int main(int argc, char* argv[])
 		}
 #endif
 
-		//The display is the end of the chain either way; only what sits in front of it changes
 		auto connectToDisplay = [&](auto& source, size_t port = 0)
 		{
-			//The scope's ports are a std::vector, and the compile-time connect<> is a hard error
-			//on those (Graph.hpp:594-596). The runtime form with a "name#index" spelling is the
-			//only way to reach one.
 			if(scopeSink != nullptr)
 			{
 				return fg.connect(source, "out", *scopeSink, "in#" + std::to_string(port))
@@ -568,37 +522,10 @@ int main(int argc, char* argv[])
 		{
 			case SourceKind::Synthetic:
 			{
-				//The quickest demonstration that the whole path works, and the one that needs
-				//nothing on disk and nothing attached.
-				//
-				//One generator per scope port, each an octave above the last, so that a
-				//multi-channel scope shows channels that are visibly different and visibly
-				//related - which is what makes a misalignment between them obvious rather than
-				//plausible. Every other consumer takes exactly one.
 				const size_t nports = (scopeSink != nullptr) ? opt.scopeChannels : 1;
 				connected = true;
-
-				//Two things here are not cosmetic.
-				//
-				//FastSin rather than Sin. ToneGenerator computes Sin as sin(omega * _currentTime)
-				//where _currentTime is a float accumulated one tick at a time
-				//(algorithm/signal/ToneGenerator.hpp:225). Once it reaches about 1.5 s the float
-				//epsilon there (1.19e-7) exceeds the tick, the accumulator stops advancing, and
-				//every subsequent sample is identical. Measured: the first duplicate lands at
-				//sample 15,067,501 at any rate, which at 10 MS/s is a second and a half.
-				//
-				//A spectrum display survives that - a frozen tone is still a tone. A scope does
-				//not: a run of equal samples contains no level crossing at all, so the trigger
-				//correctly never fires and the display looks hung. FastSin advances a recursive
-				//phasor instead, renormalised every 65536 samples, and never degenerates:
-				//zero duplicates in 40 M samples at 40 MS/s.
-				//
-				//And a ClockSource, which is how gnuradio4 intends a SignalGenerator to be driven
-				//(basic/test/qa_sources.cpp:181-186). Unclocked it free-runs as fast as the
-				//scheduler will call it - a few million samples a second in three- to five-sample
-				//chunks, of which the display then discards 99.5%. Clocked, the stream actually
-				//arrives at --rate, which is the only way the time axis means anything.
-				const gr::Size_t chunk = 8192;
+				
+                const gr::Size_t chunk = 8192;
 
 				for(size_t i = 0; i < nports; i++)
 				{
@@ -608,9 +535,6 @@ int main(int argc, char* argv[])
 						{"name", "clock" + std::to_string(i)},
 						{"sample_rate", static_cast<float>(opt.sampleRate)},
 						{"chunk_size", chunk},
-
-						//Zero is unlimited. The default is 1024, which would stop the graph after
-						//a millisecond and look exactly like a crash.
 						{"n_samples_max", gr::Size_t{0}},
 					});
 
@@ -643,9 +567,6 @@ int main(int argc, char* argv[])
 
 			case SourceKind::SigMF:
 			{
-				//cf32_le only, which is all the incubator's SigMF source reads. A ci16 recording
-				//needs either a converting source or something else feeding the sink's
-				//complex<int16_t> instantiation.
 				auto& src = fg.emplaceBlock<gr::incubator::sigmf::SigMFSource<TSample>>({
 					{"file_name", opt.file},
 					{"repeat", opt.repeat},
@@ -666,14 +587,9 @@ int main(int argc, char* argv[])
 					{"center_frequency", opt.centerHz},
 					{"gain", opt.gainDb},
 					{"channel", gr::Size_t{opt.channel}},
-
-					//The display drains block_size at a time; handing it larger chunks costs
-					//nothing and cuts the number of round trips through the port.
 					{"max_chunk_size", std::uint32_t{65536}},
 				};
 
-				//Left unset rather than passed as empty or zero, so the driver picks its own
-				//default instead of being told to use nothing
 				if(!opt.deviceArgs.empty())
 					cfg["device_args"] = opt.deviceArgs;
 				if(!opt.antenna.empty())
@@ -683,10 +599,6 @@ int main(int argc, char* argv[])
 
 				auto& src = fg.emplaceBlock<gr::incubator::soapysdr::SoapyRx<TSample>>(cfg);
 
-				//Report what was actually asked for. The radio may round the rate and the
-				//frequency to what its clocking can produce, and SoapyRx reads the achieved
-				//values back into its own settings, so this line is the request rather than
-				//the result.
 				LogNotice("SoapySDR source: %s%s at %.6g Hz, %.6g S/s, %.1f dB gain\n",
 					opt.device.empty() && opt.deviceArgs.empty() ? "(first device found)" : "",
 					opt.device.empty() ? opt.deviceArgs.c_str() : opt.device.c_str(),
@@ -714,8 +626,6 @@ int main(int argc, char* argv[])
 			return 1;
 		}
 
-		//Discover the drawable blocks generically, by category rather than by type, so that a
-		//flowgraph with two displays in it needs no change here
 		vector<gr::BlockModel*> drawables;
 		for(const auto& b : sched.blocks())
 		{
@@ -726,17 +636,12 @@ int main(int argc, char* argv[])
 		window.SetDrawableBlocks(drawables);
 
 		{
-			//Scheduler on its own thread; the main thread owns the window, the Vulkan queue and
-			//ImGui for the whole run
 			jthread schedThread([&sched]
 			{
 				if(auto r = sched.runAndWait(); !r)
 					LogError("Scheduler stopped with an error\n");
 			});
 
-			//Once a second, say what is actually getting through. Without this the only
-			//evidence the pipeline is running is the picture, which is no help over a
-			//remote session and no help at all when the answer is "nothing is arriving".
 			double lastReport = GetTime();
 			int64_t frames = 0;
 
@@ -797,25 +702,19 @@ int main(int argc, char* argv[])
 				}
 			}
 
-			//Ask the flowgraph to stop, then let the jthread join at the end of this scope.
-			//The render loop has exited, so nothing is calling draw() any more.
 			std::ignore = sched.changeStateTo(gr::lifecycle::State::REQUESTED_STOP);
 		}
 
-		//Scheduler joined. The blocks still exist and still hold GPU resources, and this is the
-		//render thread, so this is the one place they can be released correctly.
 		if(scopeSink != nullptr)
 			scopeSink->ReleaseGpuResources();
 		else
 			sink->ReleaseGpuResources();
 
-		//Before the window dies, so no draw() can run against a half-destroyed window
 		imcufosphor::globalRenderHost().Retract();
 
 		rc = 0;
 	}
-
-	//Everything Vulkan is gone; safe to tear down the process-wide state
-	ScopehalStaticCleanup();
+	
+    ScopehalStaticCleanup();
 	return rc;
 }
